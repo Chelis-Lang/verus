@@ -643,6 +643,8 @@ impl Verifier {
                 } else {
                     crate::config::LOG_DIR.to_string()
                 });
+                // Sail fork (VI-0004): one subdirectory per crate via Cargo.
+                let dir = sail_cargo_log_subdir(dir, self.via_cargo_args.is_some());
                 delete_dir_if_exists_and_is_dir(&dir)?;
                 std::fs::create_dir_all(&dir).map_err(|err| {
                     io_vir_err(format!("could not create directory {}", dir.display()), err)
@@ -3018,6 +3020,33 @@ impl Verifier {
                 });
             }
         }
+    }
+}
+
+/// Sail fork (VI-0004): the log directory of one crate in a `cargo verus` run.
+///
+/// `cargo verus` forwards the same `--log-dir` to every crate it verifies, each
+/// crate is a separate process, and each process clears the regular files of
+/// its log directory before writing its first log. So later crates deleted the
+/// logs of earlier ones, concurrent crates deleted each other's logs mid-run
+/// (with a possible `could not remove file` error), and same-named files such
+/// as `root.air` overwrote each other. Via Cargo, each crate now logs to its
+/// own subdirectory, `<log-dir>/<crate name>` for a library and
+/// `<log-dir>/<crate name>-bin` for a binary, and clears only that.
+/// Direct (non-Cargo) runs keep the given directory.
+fn sail_cargo_log_subdir(dir: std::path::PathBuf, via_cargo: bool) -> std::path::PathBuf {
+    if !via_cargo {
+        return dir;
+    }
+    match std::env::var("CARGO_CRATE_NAME") {
+        Ok(crate_name) if !crate_name.is_empty() => {
+            if std::env::var_os("CARGO_BIN_NAME").is_some() {
+                dir.join(format!("{crate_name}-bin"))
+            } else {
+                dir.join(crate_name)
+            }
+        }
+        _ => dir,
     }
 }
 
