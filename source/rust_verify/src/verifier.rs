@@ -182,6 +182,12 @@ impl Diagnostics for Reporter<'_> {
     }
 }
 
+thread_local! {
+    /// Sail fork (VI-0012): set by a parallel worker that has already reported
+    /// the start note of the bucket it is about to verify.
+    static SAIL_BUCKET_START_REPORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// A reporter message that is being collected by the main thread
 pub(crate) enum ReporterMessage {
     ReportLongRunning(CommandContext),
@@ -1907,6 +1913,27 @@ impl Verifier {
         })
     }
 
+    /// The "verifying <bucket>" progress note, shown with `--trace` or a user filter.
+    ///
+    /// Sail fork (VI-0012): this note is reported immediately, so with several
+    /// workers stock printed the notes in whatever order the workers reached
+    /// the note, not the order in which they took buckets from the queue.
+    /// Parallel workers now send it while they still hold the task queue lock,
+    /// so the notes reach the printing thread in bucket order (the order stock
+    /// prints when no worker is overtaken). The note's text, condition and
+    /// immediate printing are unchanged; `--no-report-long-running` still does
+    /// not suppress it, as in stock.
+    fn report_bucket_start(&self, reporter: &impl Diagnostics, bucket_id: &BucketId) {
+        let bucket_name = bucket_id.friendly_name();
+        let user_filter = self.user_filter.as_ref().unwrap();
+        if self.args.trace || !user_filter.is_everything() {
+            let functions_msg =
+                if user_filter.is_function_filter() { " (selected functions)" } else { "" };
+            reporter
+                .report_now(&note_bare(format!("verifying {bucket_name}{functions_msg}")).to_any());
+        }
+    }
+
     fn verify_bucket_outer(
         &mut self,
         reporter: &impl Diagnostics,
@@ -1919,13 +1946,10 @@ impl Verifier {
 
         self.bucket_stats.insert(bucket_id.clone(), Default::default());
 
-        let bucket_name = bucket_id.friendly_name();
-        let user_filter = self.user_filter.as_ref().unwrap();
-        if self.args.trace || !user_filter.is_everything() {
-            let functions_msg =
-                if user_filter.is_function_filter() { " (selected functions)" } else { "" };
-            reporter
-                .report_now(&note_bare(format!("verifying {bucket_name}{functions_msg}")).to_any());
+        // Sail fork (VI-0012): a parallel worker has already sent this note while
+        // it held the task queue; see `report_bucket_start`.
+        if !SAIL_BUCKET_START_REPORTED.with(|reported| reported.replace(false)) {
+            self.report_bucket_start(reporter, bucket_id);
         }
         let (pruned_krate, prune_info) = vir::prune::prune_krate_for_module_or_krate(
             &krate,
@@ -2166,6 +2190,12 @@ impl Verifier {
                             let elm = {
                                 let mut tq = thread_taskq.lock().unwrap();
                                 let elm = tq.pop_front();
+                                // Sail fork (VI-0012): send the bucket's start note
+                                // before releasing the queue, so notes are in bucket order.
+                                if let Some((_, bucket_id, _, reporter)) = &elm {
+                                    thread_verifier.report_bucket_start(reporter, bucket_id);
+                                    SAIL_BUCKET_START_REPORTED.with(|reported| reported.set(true));
+                                }
                                 drop(tq);
                                 elm
                             };
