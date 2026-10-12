@@ -26,10 +26,20 @@ fn run_compiler<'a, 'b>(
         syntax_macro,
         erase_ghost,
     );
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+    compiler_result(std::env::var("SAIL_ENGINE").as_deref() == Ok("interactive"), move || {
         rustc_driver::run_compiler(&rustc_args, verifier)
-    }));
-    result.map_err(|_| ())
+    })
+}
+
+// Expected Rust diagnostics unwind with FatalErrorMarker. Internal failures
+// must escape the interactive driver so no completed compiler seal is emitted.
+// The stock driver's historical catch-all behavior remains unchanged.
+fn compiler_result(interactive: bool, run: impl FnOnce()) -> Result<(), ()> {
+    if interactive {
+        rustc_driver::catch_fatal_errors(run).map_err(|_| ())
+    } else {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).map_err(|_| ())
+    }
 }
 
 pub fn is_verifying_entire_crate(verifier: &Verifier) -> bool {
@@ -306,6 +316,7 @@ pub fn run(
         spans: None,
         unresolved_import_deps: std::collections::HashSet::new(),
     };
+    crate::verifier::sail_engine_compiler_started("ghost");
     let status = run_compiler(rustc_args_verify.clone(), true, false, &mut verifier_callbacks);
     let VerifierCallbacksEraseMacro {
         verifier,
@@ -327,6 +338,7 @@ pub fn run(
     };
 
     if status.is_err() || verifier.encountered_vir_error {
+        crate::verifier::sail_engine_sealed(false);
         return (
             verifier,
             Stats {
@@ -344,6 +356,7 @@ pub fn run(
             Ok(())
         } else {
             let do_compile = verifier.compile || verifier.via_cargo_args.is_some();
+            crate::verifier::sail_engine_compiler_started("exec");
             run_with_erase_macro_compile(rustc_args, do_compile, verifier.args.vstd)
         };
 
@@ -358,9 +371,11 @@ pub fn run(
 
     // Run borrow checker and compiler with #[exec] (not #[proof])
     if let Err(_) = compile_status {
+        crate::verifier::sail_engine_sealed(false);
         return (verifier, stats, Err(()));
     }
 
+    crate::verifier::sail_engine_sealed(!verifier.encountered_vir_error && verifier.count_errors == 0);
     (verifier, stats, Ok(()))
 }
 
@@ -434,5 +449,39 @@ fn needs_stable_attr<'tcx>(tcx: TyCtxt<'tcx>, owner_id: OwnerId) -> bool {
         }
         OwnerNode::Crate(_item) => false,
         OwnerNode::Synthetic => false,
+    }
+}
+
+#[cfg(test)]
+mod sail_compiler_result_tests {
+    use super::compiler_result;
+
+    #[test]
+    fn expected_fatal_error_is_a_normal_compiler_failure() {
+        for interactive in [false, true] {
+            let result = compiler_result(interactive, || {
+                std::panic::resume_unwind(Box::new(rustc_errors::FatalErrorMarker));
+            });
+            assert_eq!(result, Err(()));
+        }
+    }
+
+    #[test]
+    fn unexpected_panic_escapes_only_the_interactive_driver() {
+        let stock = compiler_result(false, || panic!("test internal compiler failure"));
+        assert_eq!(stock, Err(()));
+        let mut reached_completion = false;
+        let interactive = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = compiler_result(true, || panic!("test internal compiler failure"));
+            reached_completion = true;
+        }));
+        assert!(interactive.is_err());
+        assert!(!reached_completion);
+    }
+
+    #[test]
+    fn successful_compiler_returns_normally_in_both_modes() {
+        assert_eq!(compiler_result(false, || {}), Ok(()));
+        assert_eq!(compiler_result(true, || {}), Ok(()));
     }
 }
