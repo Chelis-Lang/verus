@@ -3255,8 +3255,15 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
         }
 
         rustc_interface::passes::write_dep_info(tcx);
-        if self.verifier.via_cargo_args.is_some() {
-            // Sail fork (VI-0005): the compile pass rewrites this dep-info file.
+        // Sail fork (VI-0005): the compile pass rewrites this dep-info file.
+        // Only for packages selected on Cargo's command line: `cargo verus
+        // verify` forwards its Verus arguments to every package, including
+        // unverified dependencies such as vstd, so tracking them there would
+        // rebuild those dependencies whenever the selected crate's arguments
+        // change. Dependencies keep stock freshness.
+        if self.verifier.via_cargo_args.is_some()
+            && std::env::var_os("CARGO_PRIMARY_PACKAGE").is_some()
+        {
             crate::cargo_verus_dep_tracker::DepTracker::sail_record_verify_pass_depinfo(tcx.sess);
         }
         self.verifier.crate_id = Some(mk_crate_id(tcx, LOCAL_CRATE));

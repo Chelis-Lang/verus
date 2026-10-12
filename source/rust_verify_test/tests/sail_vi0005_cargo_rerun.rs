@@ -43,4 +43,7 @@ fn sail_vi0005_changed_verus_arguments_reverify() {
         "changed Verus arguments did not re-verify:\n{}",
         changed
     );
+    // The forwarded arguments also reach the vstd path dependency, which is
+    // not selected; like stock, it must not be rebuilt for them.
+    assert!(!changed.contains("Checking vstd"), "vstd was rebuilt:\n{}", changed);
 }
