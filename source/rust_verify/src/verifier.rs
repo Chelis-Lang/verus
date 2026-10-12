@@ -2253,7 +2253,10 @@ impl Verifier {
                                     task,
                                 );
                                 if let Err(e) = &res {
-                                    reporter.report_now(&e.clone().to_any());
+                                    // Sail fork (VI-0007): report a bucket's error in
+                                    // bucket order (not immediately, in arrival order); it
+                                    // is still sent before `done`, so it stays in the bucket.
+                                    reporter.report(&e.clone().to_any());
                                 }
                                 reporter.done(); // we've verified the bucket, send the done message
                                 completed_tasks.push(res.map_err(|_| ()));
@@ -2285,7 +2288,9 @@ impl Verifier {
 
             // start handling messages, we keep track of the current active bucket for which we
             // print messages immediately, while buffering other messages from the other buckets
-            let mut active_bucket = None;
+            // Sail fork (VI-0007): the index of the bucket whose messages are printed
+            // directly; see the Message and Done handling below.
+            let mut active_bucket: usize = 0;
             let mut num_done = 0;
             let mut local_msgs: VecDeque<ReporterMessage> = VecDeque::new();
             loop {
@@ -2314,19 +2319,19 @@ impl Verifier {
                             continue;
                         }
 
-                        if let Some(m) = active_bucket {
-                            // if it's the active bucket, print the message
-                            if id == m {
-                                multi_progress.suspend(|| reporter.report_as(&msg.to_any(), level));
-                            } else {
-                                let msgs = messages.get_mut(id).expect("message id out of range");
-                                msgs.1.push((msg, level));
-                            }
-                        } else {
-                            // no active bucket, print this message and set the bucket as the
-                            // active one
-                            active_bucket = Some(id);
+                        // Sail fork (VI-0007): stock made the first bucket to send a
+                        // message the active one, so buckets' diagnostics (for example
+                        // errors from different modules) were printed in completion
+                        // order, which varies between runs. The active bucket is now
+                        // always the lowest-numbered bucket that has not finished, and
+                        // every other bucket's messages wait for it, so diagnostics
+                        // appear in bucket order. Stock prints this same sequence when
+                        // its buckets happen to report in that order.
+                        if id == active_bucket {
                             multi_progress.suspend(|| reporter.report_as(&msg.to_any(), level));
+                        } else {
+                            let msgs = messages.get_mut(id).expect("message id out of range");
+                            msgs.1.push((msg, level));
                         }
                     }
                     ReporterMessage::Done(id) => {
@@ -2338,37 +2343,18 @@ impl Verifier {
                             msgs.0 = true;
                         }
 
-                        // if it is the active bucket, mark it as done, and reset the active bucket
-                        if let Some(m) = active_bucket {
-                            if m == id {
-                                assert!(
-                                    messages
-                                        .get_mut(id)
-                                        .expect("message id out of range")
-                                        .1
-                                        .is_empty()
-                                );
-                                active_bucket = None;
+                        // Sail fork (VI-0007): advance past finished buckets in order,
+                        // printing what each buffered, then print what the new active
+                        // bucket has buffered so far; its later messages print directly.
+                        while active_bucket < messages.len() {
+                            let msgs = &mut messages[active_bucket];
+                            for (msg, level) in msgs.1.drain(..) {
+                                multi_progress.suspend(|| reporter.report_as(&msg.to_any(), level));
                             }
-                        }
-
-                        // try to pick a new active bucket here, the first one that has any messages
-                        if active_bucket.is_none() {
-                            for (i, msgs) in messages.iter_mut().enumerate() {
-                                if msgs.1.is_empty() {
-                                    continue;
-                                }
-                                // drain and print all messages of the bucket
-                                for (msg, level) in msgs.1.drain(..) {
-                                    multi_progress
-                                        .suspend(|| reporter.report_as(&msg.to_any(), level));
-                                }
-                                // if the bucket wasn't done, make it active and handle next message
-                                if !msgs.0 {
-                                    active_bucket = Some(i);
-                                    break;
-                                }
+                            if !msgs.0 {
+                                break;
                             }
+                            active_bucket += 1;
                         }
 
                         num_done = num_done + 1;
@@ -2532,6 +2518,13 @@ impl Verifier {
                         }
                     }
                     ReporterMessage::WorkerPanicked(err) => {
+                        // Sail fork (VI-0007): messages held back for bucket order would
+                        // otherwise be lost; print them, in bucket order, before unwinding.
+                        for msgs in messages.iter_mut() {
+                            for (msg, level) in msgs.1.drain(..) {
+                                multi_progress.suspend(|| reporter.report_as(&msg.to_any(), level));
+                            }
+                        }
                         std::panic::resume_unwind(err);
                     }
                 }
