@@ -38,6 +38,16 @@ pub struct SmtProcess {
     recv_requests: Sender<BufReader<ChildStdout>>,
     child: Child,
     transcript_log: Option<Box<dyn std::io::Write>>,
+    sail_stats: Option<SailSmtProcessStats>,
+}
+
+/// Sail fork (M8.0): stage timers for one solver process, kept only when the
+/// caller enables them (`--time-expanded`). They observe the bytes sent and the
+/// time spent waiting for replies; nothing sent to the solver changes.
+pub(crate) struct SailSmtProcessStats {
+    pub(crate) wait: std::time::Duration,
+    pub(crate) bytes: u64,
+    pub(crate) hasher: std::hash::DefaultHasher,
 }
 
 const DONE: &str = "<<DONE>>";
@@ -151,7 +161,24 @@ impl SmtProcess {
             recv_requests: recv_responses_sender,
             child: child,
             transcript_log,
+            sail_stats: None,
         }
+    }
+
+    /// Sail fork (M8.0): start recording stage timers for this process.
+    pub(crate) fn sail_enable_stats(&mut self) {
+        self.sail_stats = Some(SailSmtProcessStats {
+            wait: std::time::Duration::ZERO,
+            bytes: 0,
+            hasher: std::hash::DefaultHasher::new(),
+        });
+    }
+
+    /// Sail fork (M8.0): time spent waiting for replies, bytes sent, and a
+    /// digest of the bytes sent so far.
+    pub(crate) fn sail_stats(&self) -> Option<(std::time::Duration, u64, u64)> {
+        use std::hash::Hasher;
+        self.sail_stats.as_ref().map(|s| (s.wait, s.bytes, s.hasher.finish()))
     }
 
     pub(crate) fn set_transcript_log(&mut self, writer: Box<dyn std::io::Write>) {
@@ -166,6 +193,14 @@ impl SmtProcess {
     /// Send commands to the solver
     pub(crate) fn send_commands_async<'a>(&'a mut self, commands: Vec<u8>) -> CommandsHandle<'a> {
         // Send request to writer thread
+        let sail_sent_at = if let Some(stats) = &mut self.sail_stats {
+            use std::hash::Hasher;
+            stats.bytes += commands.len() as u64;
+            stats.hasher.write(&commands);
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         if let Some(writer) = &mut self.transcript_log {
             writeln!(writer, ";;;>>> QUERY").unwrap();
             writer.write_all(&commands).unwrap();
@@ -188,16 +223,24 @@ impl SmtProcess {
             .send(smt_pipe_stdout)
             .expect("internal error: failed to send to reader thread");
 
-        CommandsHandle { smt_process: self, receiver }
+        CommandsHandle { smt_process: self, receiver, sail_sent_at }
     }
 }
 
 pub struct CommandsHandle<'a> {
     smt_process: &'a mut SmtProcess,
     receiver: std::sync::mpsc::Receiver<(BufReader<ChildStdout>, Vec<String>)>,
+    sail_sent_at: Option<std::time::Instant>,
 }
 
 impl<'a> CommandsHandle<'a> {
+    fn sail_record_wait(&mut self) {
+        if let (Some(sent_at), Some(stats)) = (self.sail_sent_at, &mut self.smt_process.sail_stats)
+        {
+            stats.wait += sent_at.elapsed();
+        }
+    }
+
     fn log_result(&mut self, result: &Vec<String>) {
         if let Some(writer) = &mut self.smt_process.transcript_log {
             writeln!(writer, ";;;>>> RESPONSE").unwrap();
@@ -212,6 +255,7 @@ impl<'a> CommandsHandle<'a> {
     pub fn wait(mut self) -> Vec<String> {
         let (smt_pipe_stdout, result) =
             self.receiver.recv().expect("internal error: solver reader thread failure");
+        self.sail_record_wait();
         self.log_result(&result);
         self.smt_process.responses_buf_recv = Some((smt_pipe_stdout, self.receiver));
         result
@@ -220,6 +264,7 @@ impl<'a> CommandsHandle<'a> {
     pub fn wait_timeout(mut self, timeout: std::time::Duration) -> Result<Vec<String>, Self> {
         match self.receiver.recv_timeout(timeout) {
             Ok((smt_pipe_stdout, result)) => {
+                self.sail_record_wait();
                 self.log_result(&result);
                 self.smt_process.responses_buf_recv = Some((smt_pipe_stdout, self.receiver));
                 Ok(result)

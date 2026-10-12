@@ -93,9 +93,25 @@ impl SmtSolver {
     }
 }
 
+/// Sail fork (M8.0): per-context solver-process stage timers.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SailSmtStats {
+    /// solver processes started (0 or 1 per context)
+    pub processes: u64,
+    /// time to start the solver process
+    pub spawn: Duration,
+    /// time spent waiting for the solver's replies
+    pub wait: Duration,
+    /// bytes sent to the solver
+    pub bytes: u64,
+    /// a digest of the bytes sent to the solver (0 if none were sent)
+    pub digest: u64,
+}
+
 pub struct Context {
     pub(crate) message_interface: Arc<dyn crate::messages::MessageInterface>,
     smt_process: Option<SmtProcess>,
+    sail_stage_timers: Option<SailSmtStats>,
     pub(crate) axiom_infos: ScopeMap<Ident, Arc<AxiomInfo>>,
     pub(crate) axiom_infos_count: u64,
     pub(crate) array_map: ScopeMap<ClosureTerm, Ident>,
@@ -135,6 +151,7 @@ impl Context {
         let mut context = Context {
             message_interface: message_interface.clone(),
             smt_process: None,
+            sail_stage_timers: None,
             axiom_infos: ScopeMap::new(),
             axiom_infos_count: 0,
             array_map: ScopeMap::new(),
@@ -203,11 +220,39 @@ impl Context {
         context
     }
 
+    /// Sail fork (M8.0): record solver-process stage timers for this context
+    /// (`--time-expanded`). Call before the first query; it changes nothing
+    /// that is sent to the solver.
+    pub fn sail_enable_stage_timers(&mut self) {
+        if self.sail_stage_timers.is_none() {
+            self.sail_stage_timers = Some(SailSmtStats::default());
+        }
+    }
+
+    /// Sail fork (M8.0): solver-process stage timers, if enabled.
+    pub fn sail_stage_timers(&self) -> Option<SailSmtStats> {
+        let mut stats = self.sail_stage_timers?;
+        if let Some((wait, bytes, digest)) = self.smt_process.as_ref().and_then(|p| p.sail_stats())
+        {
+            stats.wait += wait;
+            stats.bytes += bytes;
+            stats.digest = digest;
+        }
+        Some(stats)
+    }
+
     pub fn get_smt_process(&mut self) -> &mut SmtProcess {
         // Only start the smt process if there are queries to run
         if self.smt_process.is_none() {
             let transcript_log = self.smt_transcript_log.take();
-            self.smt_process = Some(SmtProcess::launch(&self.solver, transcript_log));
+            let launch_start = std::time::Instant::now();
+            let mut smt_process = SmtProcess::launch(&self.solver, transcript_log);
+            if let Some(stats) = &mut self.sail_stage_timers {
+                stats.processes += 1;
+                stats.spawn += launch_start.elapsed();
+                smt_process.sail_enable_stats();
+            }
+            self.smt_process = Some(smt_process);
         }
         self.smt_process.as_mut().unwrap()
     }
