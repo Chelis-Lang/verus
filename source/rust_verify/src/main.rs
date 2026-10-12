@@ -519,8 +519,21 @@ pub fn main() {
     if verifier.args.output_json {
         // Render function verification details as JSON.
         let mut func_details: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-        for (func, details) in &verifier.func_details {
-            let name = vir::ast_util::fun_as_friendly_rust_name(&func);
+        // Sail fork (VI-0008): `func_details` is a `HashMap`, and with serde_json's
+        // `preserve_order` its iteration order reached the output and varied
+        // between runs. Insert the entries sorted by name, then by the VIR
+        // function identity (distinct trait impls can share a friendly name,
+        // VI-0010, and the later insert replaces the earlier as in stock).
+        // This is one of the sequences stock can produce.
+        let mut sorted_details: Vec<_> = verifier
+            .func_details
+            .iter()
+            .map(|(func, details)| (vir::ast_util::fun_as_friendly_rust_name(&func), func, details))
+            .collect();
+        sorted_details.sort_by(|(name_a, func_a, _), (name_b, func_b, _)| {
+            name_a.cmp(name_b).then_with(|| func_a.cmp(func_b))
+        });
+        for (name, _, details) in sorted_details {
             func_details.insert(name, details.to_json());
         }
 
