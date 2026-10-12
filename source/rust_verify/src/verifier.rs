@@ -3226,6 +3226,10 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
         }
 
         rustc_interface::passes::write_dep_info(tcx);
+        if self.verifier.via_cargo_args.is_some() {
+            // Sail fork (VI-0005): the compile pass rewrites this dep-info file.
+            crate::cargo_verus_dep_tracker::DepTracker::sail_record_verify_pass_depinfo(tcx.sess);
+        }
         self.verifier.crate_id = Some(mk_crate_id(tcx, LOCAL_CRATE));
 
         let time_import0 = Instant::now();
