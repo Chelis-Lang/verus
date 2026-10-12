@@ -190,6 +190,9 @@ impl Score {
 struct Ctxt {
     // variables the triggers must cover
     trigger_vars: HashSet<VarIdent>,
+    // Sail fork (VI-0015): the same variables in binder order, for a
+    // deterministic search order in compute_triggers
+    trigger_var_order: Vec<VarIdent>,
     // terms with App
     all_terms: HashMap<Term, Span>,
     // terms with App and without Other
@@ -714,9 +717,24 @@ fn compute_triggers(
         return Ok(());
     }
     check_timeout(timer)?;
-    // pick one variable x from remaining_vars
-    let x = state.remaining_vars.iter().next().unwrap().clone();
-    for (term, span) in &ctxt.pure_terms_by_var[&x] {
+    // Sail fork (VI-0015): stock took `remaining_vars.iter().next()` (a
+    // `HashSet`) and walked `pure_terms_by_var[&x]` (a `HashMap`) in hash
+    // order. Ties between equally scored covers keep the first one found, so
+    // the chosen trigger depended on per-map random hash seeds and could
+    // differ between runs, and between two lowerings in one process. Visit
+    // the variables in binder order and the candidate terms in the order
+    // `gather_terms` met them (source order; the same key that sorts the final
+    // triggers). This is one of the orders stock can visit, so the search and
+    // its scoring are unchanged and the result is a trigger stock can choose.
+    let x = ctxt
+        .trigger_var_order
+        .iter()
+        .find(|v| state.remaining_vars.contains(*v))
+        .expect("remaining_vars is non-empty and a subset of trigger_var_order")
+        .clone();
+    let mut candidates: Vec<(&Term, &Span)> = ctxt.pure_terms_by_var[&x].iter().collect();
+    candidates.sort_by_key(|(term, _)| ctxt.pure_terms[*term].1);
+    for (term, span) in candidates {
         if !state.accumulated_terms.contains_key(term) {
             state.accumulated_terms.insert(term.clone(), span.clone());
             let mut vars: HashSet<VarIdent> = HashSet::new();
@@ -749,6 +767,7 @@ pub(crate) fn build_triggers(
 ) -> Result<Trigs, VirErr> {
     let mut ctxt = Ctxt {
         trigger_vars: vars.iter().cloned().collect(),
+        trigger_var_order: vars.clone(), // Sail fork (VI-0015)
         all_terms: HashMap::new(),
         pure_terms: HashMap::new(),
         all_terms_by_app: HashMap::new(),
