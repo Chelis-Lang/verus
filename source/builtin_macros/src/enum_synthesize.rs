@@ -149,6 +149,22 @@ pub(crate) fn visit_item_enum_synthesize(
         }
     }
 
+    // Sail fork (VI-0001): `direct_fields` is a `HashMap` with a per-process
+    // random hash seed, so generating the `arrow_*` accessors by iterating it
+    // emitted them (and their SMT declarations) in a different order on every
+    // run. Generate them in source order instead: order each surviving field by
+    // its first occurrence in `all_fields`, which follows the variants and
+    // fields as written. Stock can produce this order; only the choice among
+    // orders becomes fixed. The set of generated methods is unchanged.
+    let direct_fields: Vec<(FieldName, (FieldInfo, Vec<Ident>))> = {
+        let first_position = |name: &FieldName| {
+            all_fields.iter().position(|(_, n, _)| n == name).unwrap_or(usize::MAX)
+        };
+        let mut fields: Vec<_> = direct_fields.into_iter().collect();
+        fields.sort_by_key(|(name, _)| first_position(name));
+        fields
+    };
+
     let enum_vis_pub = !matches!(enum_.vis, verus_syn::Visibility::Inherited);
     if direct_fields.len() != 0 || all_fields.len() != 0 {
         let enum_ident = &enum_.ident;
