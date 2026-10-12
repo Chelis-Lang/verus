@@ -358,6 +358,11 @@ pub fn run_verus(
         } else if *option == "--edition 2018" {
             verus_args.push("--edition".to_string());
             verus_args.push("2018".to_string());
+        } else if let Some(arg) = option.strip_prefix("--sail-raw=") {
+            // Sail fork: pass one verifier argument through unchanged. The
+            // fork's regression tests (sail_*.rs) use it for options such as
+            // `--log-dir` or `--triggers` that this harness does not model.
+            verus_args.push(arg.to_string());
         } else {
             panic!("option '{}' not recognized by test harness", option);
         }
