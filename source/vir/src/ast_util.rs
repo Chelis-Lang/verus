@@ -449,6 +449,27 @@ pub fn path_as_vstd_name(path: &Path) -> Option<String> {
     crate::def::name_as_vstd_name(&path_as_friendly_rust_name(path))
 }
 
+// Private engine reporting must not clone an unbounded friendly-name alias.
+// Preserve exactly the normal spelling, but admit bytes before allocation.
+pub fn sail_bounded_friendly_name(path:&Path,limit:usize)->Option<String> {
+    if let Ok(guard)=PATH_AS_RUST_NAME_MAP.lock() {
+        if let Some(name)=guard.as_ref().and_then(|map|map.get(path)) {
+            if name.len()>limit{return None;}return Some(name.clone());
+        }
+    }
+    // The pinned crate-name converter escapes characters and replaces three
+    // escape delimiters; conservatively reserve its transient expansion first.
+    let crate_bound=match &path.krate {crate::ast::CrateId::Id(name,_)=>name.len().checked_mul(16)?.checked_add(16)?,_=>16};
+    let mut bound=crate_bound;
+    for segment in path.segments.iter(){bound=bound.checked_add(2)?.checked_add(segment.len())?;}
+    if bound>limit{return None;}
+    let krate=crate::def::krate_to_string_ignore_stable_id(&path.krate);
+    let mut size=krate.len();for segment in path.segments.iter(){size=size.checked_add(2)?.checked_add(segment.len())?;}
+    let mut name=String::new();name.try_reserve_exact(size).ok()?;if name.capacity()>limit{return None;}
+    name.push_str(&krate);for segment in path.segments.iter(){name.push_str("::");name.push_str(segment);}
+    Some(name)
+}
+
 pub fn fun_as_friendly_rust_name(fun: &Fun) -> String {
     let FunX { path } = &**fun;
     path_as_friendly_rust_name(path)
@@ -1516,5 +1537,23 @@ impl AssertQueryMode {
             AssertQueryMode::NonLinear => "nonlinear_arith",
             AssertQueryMode::BitVector => "bit_vector",
         }
+    }
+}
+
+#[cfg(test)]
+mod sail_bounded_name_tests {
+    use super::*;
+    #[test]
+    fn friendly_alias_and_unicode_spelling_are_unchanged_and_admitted_before_clone(){
+        for krate in [CrateId::Internal,CrateId::Id(Arc::new("1α".to_owned()),19)] {
+            let path=Arc::new(PathX {krate,segments:Arc::new(vec![Arc::new("exact".to_owned())])});
+            assert_eq!(sail_bounded_friendly_name(&path,4096),Some(path_as_friendly_rust_name(&path)));
+            assert!(sail_bounded_friendly_name(&path,1).is_none());
+        }
+        let path=Arc::new(PathX {krate:CrateId::Core,segments:Arc::new(vec![Arc::new("sail_budget_alias_probe".to_owned())])});
+        let friendly=Arc::new(PathX {krate:CrateId::Core,segments:Arc::new(vec![Arc::new("exact_alias".repeat(100))])});
+        set_path_as_rust_name(&path,&friendly);
+        assert!(sail_bounded_friendly_name(&path,64).is_none());
+        assert_eq!(sail_bounded_friendly_name(&path,4096),Some(path_as_friendly_rust_name(&path)));
     }
 }

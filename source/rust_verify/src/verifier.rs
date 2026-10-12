@@ -47,6 +47,9 @@ use vir::ast_util::{fun_as_friendly_rust_name, is_visible_to};
 use vir::def::{CommandContext, CommandsWithContext, CommandsWithContextX, SnapPos};
 use vir::prelude::PreludeConfig;
 
+#[path = "sail_engine.rs"]
+mod sail_engine;
+
 const RLIMIT_PER_SECOND_Z3: f32 = 3000000f32;
 const RLIMIT_PER_SECOND_CVC5: f32 = 333333f32; // ~= 5s
 
@@ -80,6 +83,7 @@ impl<'tcx> Reporter<'tcx> {
 /// errors/notes)
 impl air::messages::Diagnostics for Reporter<'_> {
     fn report_as(&self, msg: &ArcDynMessage, level: MessageLevel) {
+        sail_engine::diagnostic(msg, level);
         let msg: &MessageX =
             msg.downcast_ref().expect("unexpected value in Any -> Message conversion");
 
@@ -1014,6 +1018,10 @@ impl Verifier {
             air_context.finish_query();
         }
 
+        sail_engine::emit!("obligation-observed", {
+            "function": sail_engine::ObservedFriendly(&context.fun), "description":context.desc,
+            "invalidity":invalidity, "timed_out":timed_out, "confirmed":false
+        });
         RunCommandQueriesResult {
             used_axioms,
             invalidity,
@@ -1077,6 +1085,7 @@ impl Verifier {
         bucket_id: &BucketId,
         function_name: &Fun,
         comment: &str,
+        sail_spinoff: Option<usize>,
         desc_prefix: Option<&str>,
         default_prover_failed_assert_ids: &mut Vec<AssertId>,
     ) -> RunCommandQueriesResult {
@@ -1106,6 +1115,7 @@ impl Verifier {
             air_context.comment(&context.span.as_string);
         }
         for command in commands.iter() {
+            let progress=if matches!(**command,CommandX::CheckValid(_)) { sail_engine::progress_start(self,&context.fun,comment,&context.desc,sail_spinoff,commands.iter().filter(|command|matches!(***command,CommandX::CheckValid(_))).count()) } else {None};
             result = result
                 + self.check_result_validity(
                     bucket_id,
@@ -1121,6 +1131,7 @@ impl Verifier {
                     *prover_choice,
                     default_prover_failed_assert_ids,
                 );
+            if let Some(progress)=progress {sail_engine::emit!("obligation-progress", {"function":sail_engine::ObservedFriendly(&context.fun),"obligation":progress,"description":context.desc,"completed":true});}
         }
 
         result
@@ -1574,6 +1585,7 @@ impl Verifier {
                                 None
                             };
 
+                            let sail_spinoff=do_spinoff.then_some(spinoff_context_counter);
                             let mut query_air_context = if do_spinoff {
                                 let spinoff_reason = if cmds.prover_choice
                                     == vir::def::ProverChoice::Nonlinear
@@ -1647,6 +1659,7 @@ impl Verifier {
                                 bucket_id,
                                 &function.x.name,
                                 &op.to_air_comment(),
+                                sail_spinoff,
                                 None,
                                 &mut default_prover_failed_assert_ids,
                             );
@@ -2038,6 +2051,7 @@ impl Verifier {
         let VerifyBucketOut { time_smt_init, time_smt_run, rlimit_count } =
             self.verify_bucket(reporter, &krate_sst, source_map, bucket_id, &mut ctx)?;
 
+        sail_engine::functions_observed(self,bucket_id);
         global_ctx = ctx.free();
 
         let time_verify_end = Instant::now();
@@ -2061,11 +2075,11 @@ impl Verifier {
     fn verify_crate_inner(
         &mut self,
         compiler: &Compiler,
-        spans: &SpanContext,
+        _spans: &SpanContext,
+        reporter: &impl Diagnostics,
     ) -> Result<(), VerifyErr> {
         let time_verify_sequential_start = Instant::now();
 
-        let reporter = Reporter::new(spans, compiler);
         let krate = self.vir_crate.clone().expect("vir_crate should be initialized");
         let air_no_span = self.air_no_span.clone().expect("air_no_span should be initialized");
 
@@ -2265,7 +2279,6 @@ impl Verifier {
             let mut active_bucket = None;
             let mut num_done = 0;
             let mut local_msgs: VecDeque<ReporterMessage> = VecDeque::new();
-            let reporter = Reporter::new(spans, compiler);
             loop {
                 let msg = match local_msgs.pop_front() {
                     Some(msg) => msg,
@@ -2578,7 +2591,7 @@ impl Verifier {
 
             for bucket_id in &bucket_ids {
                 global_ctx = self.verify_bucket_outer(
-                    &reporter,
+                    reporter,
                     &krate,
                     Some(source_map),
                     bucket_id,
@@ -2615,20 +2628,20 @@ impl Verifier {
                 chosen.manual,
             ) {
                 (ShowTriggers::Selective, true, false) if chosen.low_confidence => {
-                    report_chosen_triggers(&reporter, &chosen, true);
+                    report_chosen_triggers(reporter, &chosen, true);
                     low_confidence_triggers = Some(chosen.span);
                 }
                 (ShowTriggers::Module, true, false) => {
-                    report_chosen_triggers(&reporter, &chosen, true);
+                    report_chosen_triggers(reporter, &chosen, true);
                 }
                 (ShowTriggers::AllModules, _, false) => {
-                    report_chosen_triggers(&reporter, &chosen, true);
+                    report_chosen_triggers(reporter, &chosen, true);
                 }
                 (ShowTriggers::Verbose, true, _) => {
-                    report_chosen_triggers(&reporter, &chosen, !chosen.manual);
+                    report_chosen_triggers(reporter, &chosen, !chosen.manual);
                 }
                 (ShowTriggers::VerboseAllModules, _, _) => {
-                    report_chosen_triggers(&reporter, &chosen, !chosen.manual);
+                    report_chosen_triggers(reporter, &chosen, !chosen.manual);
                 }
                 (
                     ShowTriggers::Selective
@@ -2671,7 +2684,7 @@ impl Verifier {
         let time_verify_crate_start = Instant::now();
 
         let result = if !self.args.no_verify || self.args.build_sst {
-            self.verify_crate_inner(&compiler, spans)
+            self.verify_crate_inner(&compiler, spans, &Reporter::new(spans, compiler))
         } else {
             Ok(())
         };
@@ -3392,6 +3405,7 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
         }
 
         self.spans = Some(spans);
+        self.verifier.sail_focus(compiler, self.spans.as_ref().unwrap());
         self.finish_verus(compiler);
 
         rustc_driver::Compilation::Stop
@@ -3471,3 +3485,6 @@ impl VerifierCallbacksEraseMacro {
         }
     }
 }
+
+pub(crate) fn sail_engine_compiler_started(role:&str) { sail_engine::emit!("compiler-started", {"role":role}); }
+pub(crate) fn sail_engine_sealed(success:bool) { sail_engine::emit!("phase-finished", {"success":success}); sail_engine::emit!("compiler-sealed", {"success":success,"normal_termination":true}); }
