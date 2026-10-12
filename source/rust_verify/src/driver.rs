@@ -123,6 +123,10 @@ impl rustc_driver::Callbacks for CompilerCallbacksEraseMacro {
     // Adding `override_stability` and `stable_attr` functions is a hacky solution specifically for verifying core,
     // to fix an issue with stability attributes.
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
+        // Sail fork (VI-0005): this pass writes the crate's dep-info file again;
+        // keep the verification pass's env and file dependencies in it, so Cargo
+        // re-verifies when forwarded Verus arguments change. Only set via Cargo.
+        crate::cargo_verus_dep_tracker::DepTracker::sail_install_verify_pass_depinfo(config);
         if self.override_stability {
             config.override_queries = Some(|_session, providers| {
                 providers.queries.hir_attr_map = |tcx, owner_id| {
