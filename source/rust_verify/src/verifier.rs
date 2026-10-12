@@ -890,6 +890,12 @@ impl Verifier {
                 | ValidityResult::Invalid(_, error @ None, _) => {
                     if is_first_check && level == Some(MessageLevel::Error) {
                         self.count_errors += 1;
+                        // Sail fork (VI-0003): record the failure as the other error
+                        // paths do. Without it, a function whose only failure is a
+                        // bit-vector (or Singular) query kept `"success": true` in the
+                        // `--output-json` timing breakdown although the error was
+                        // reported and counted. Diagnostics and counts are unchanged.
+                        self.func_fails.insert(context.fun.clone());
                         invalidity = true;
                     }
                     if self.expand_flag {
