@@ -1780,7 +1780,21 @@ impl Verifier {
                         }
 
                         // collect the smt run time from this command into the function duration
-                        if commands_with_context_list.len() != 0 {
+                        //
+                        // Sail fork (VI-0009): only for functions the user filter
+                        // selects. `run_commands_queries` skips every query of an
+                        // unselected function, but stock still created a timing entry
+                        // for it, which `--output-json` then reported with
+                        // `"success": true` (success is "not in func_fails"), although
+                        // the function was never checked. Whole-crate runs select every
+                        // function and are unchanged.
+                        if commands_with_context_list.len() != 0
+                            && self
+                                .user_filter
+                                .as_ref()
+                                .unwrap()
+                                .includes_function(&function.x.name)
+                        {
                             let func_time =
                                 self.func_times.entry(bucket_id.clone()).or_insert(HashMap::new());
                             let func_stats = func_time.entry(function.x.name.clone()).or_insert(
