@@ -8,9 +8,11 @@ use common::*;
 fn two_modules() -> String {
     verus_code! {
         mod a {
+            use vstd::prelude::*;
             pub proof fn lemma_a() { assert(1int + 1 == 2); }
         }
         mod b {
+            use vstd::prelude::*;
             pub proof fn lemma_b() { assert(2int + 2 == 4); }
             pub proof fn lemma_c() { assert(3int + 3 == 6); }
         }
@@ -22,7 +24,7 @@ fn sail_m8_stage_timers_with_time_expanded() {
     let diags = verify_one_file(
         "sail_m8_stage_timers_with_time_expanded",
         two_modules(),
-        &["--output-json", "--sail-raw=--time-expanded", "--sail-raw=--verify-root"],
+        &["--output-json", "--sail-raw=--time-expanded"],
     )
     .unwrap_or_else(|err| panic!("should verify: {:?}", err));
     let json = diags.json_output.expect("--output-json output");
@@ -33,7 +35,7 @@ fn sail_m8_stage_timers_with_time_expanded() {
     let buckets = stages["buckets"].as_array().expect("bucket stages");
     assert_eq!(crates[0]["num-buckets"].as_u64().unwrap(), buckets.len() as u64);
     let names: Vec<&str> = buckets.iter().map(|b| b["bucket"].as_str().unwrap()).collect();
-    assert!(names.contains(&"a") && names.contains(&"b"), "{names:?}");
+    assert!(names.contains(&"module a") && names.contains(&"module b"), "{:?}", names);
     for b in buckets {
         let start = b["start"].as_u64().unwrap();
         let end = b["end"].as_u64().unwrap();
@@ -60,10 +62,10 @@ fn sail_m8_stage_timers_with_time_expanded() {
         .map(|k| b[*k].as_u64().unwrap())
         .sum();
         // the stages partition the bucket's wall time (up to rounding)
-        assert!(parts <= end - start + 20, "{parts} > {}", end - start);
+        assert!(parts <= end - start + 20, "{} > {}", parts, end - start);
     }
-    let a = buckets.iter().find(|b| b["bucket"] == "a").unwrap();
-    let bb = buckets.iter().find(|b| b["bucket"] == "b").unwrap();
+    let a = buckets.iter().find(|b| b["bucket"] == "module a").unwrap();
+    let bb = buckets.iter().find(|b| b["bucket"] == "module b").unwrap();
     assert_ne!(a["smt-digest"], bb["smt-digest"]);
     assert_eq!(bb["functions"], 2);
 }
@@ -73,7 +75,7 @@ fn sail_m8_stage_timers_absent_without_time_expanded() {
     let diags = verify_one_file(
         "sail_m8_stage_timers_absent_without_time_expanded",
         two_modules(),
-        &["--output-json", "--sail-raw=--time", "--sail-raw=--verify-root"],
+        &["--output-json", "--sail-raw=--time"],
     )
     .unwrap_or_else(|err| panic!("should verify: {:?}", err));
     let json = diags.json_output.expect("--output-json output");
