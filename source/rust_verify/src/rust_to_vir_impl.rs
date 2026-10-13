@@ -442,8 +442,9 @@ pub(crate) fn translate_impl<'tcx>(
         None
     };
 
+    let impl_items = enum_accessor_items_in_source_order(ctxt, impll, &vattrs, impl_def_id);
     let mut errors = vec![];
-    for impl_item_id in impll.items {
+    for impl_item_id in impl_items.iter() {
         if vattrs.external_trait_blanket {
             return Ok(());
         }
@@ -467,6 +468,77 @@ pub(crate) fn translate_impl<'tcx>(
         }
     }
     if errors.len() > 0 { Err(errors) } else { Ok(()) }
+}
+
+/// Sail fork (VI-0001): the items of an impl, with `enum_synthesize`'s `arrow_<field>`
+/// accessors in source order.
+///
+/// Stock `builtin_macros` generates the `arrow_<field>` accessors of an enum by iterating a
+/// `HashMap`, so they (and their SMT declarations) change order between processes. Under
+/// `cargo verus` the macro crate is built from the project's dependency source, so a fix in
+/// the macro alone does not reach those builds. Here the generated impl is recognised by its
+/// shape, `[arrow_<field>.., arrow_<Variant>_<field>..]` with the second group exactly the
+/// enum's fields in declaration order, and the first group is put in the order its fields
+/// first appear in the enum. That is the order the fixed macro emits, and one of the orders
+/// stock's macro can emit. Any other impl keeps its written order.
+fn enum_accessor_items_in_source_order<'tcx>(
+    ctxt: &Context<'tcx>,
+    impll: &rustc_hir::Impl<'tcx>,
+    vattrs: &crate::attributes::VerifierAttrs,
+    impl_def_id: DefId,
+) -> Vec<rustc_hir::ImplItemId> {
+    let items: Vec<rustc_hir::ImplItemId> = impll.items.to_vec();
+    if impll.of_trait.is_some() || !vattrs.verus_macro {
+        return items;
+    }
+    let rustc_middle::ty::TyKind::Adt(adt_def, _) =
+        ctxt.tcx.type_of(impl_def_id).skip_binder().kind()
+    else {
+        return items;
+    };
+    if !adt_def.is_enum() || !adt_def.did().is_local() {
+        return items;
+    }
+    // Every (variant, field) of the enum, in declaration order.
+    let all_fields: Vec<(String, String)> = adt_def
+        .variants()
+        .iter()
+        .flat_map(|v| v.fields.iter().map(move |f| (v.name.to_string(), f.name.to_string())))
+        .collect();
+    let Some(n_direct) = items.len().checked_sub(all_fields.len()) else {
+        return items;
+    };
+    let names: Vec<String> =
+        items.iter().map(|id| ctxt.tcx.item_name(id.owner_id.to_def_id()).to_string()).collect();
+    let is_fn = |id: &rustc_hir::ImplItemId| {
+        matches!(ctxt.tcx.hir_impl_item(*id).kind, ImplItemKind::Fn(..))
+    };
+    if !items.iter().all(is_fn) {
+        return items;
+    }
+    let tail_matches = names[n_direct..]
+        .iter()
+        .zip(all_fields.iter())
+        .all(|(name, (variant, field))| *name == format!("arrow_{variant}_{field}"));
+    if !tail_matches {
+        return items;
+    }
+    let mut direct: Vec<(usize, rustc_hir::ImplItemId)> = Vec::with_capacity(n_direct);
+    let mut seen: HashSet<&str> = HashSet::new();
+    for (id, name) in items[..n_direct].iter().zip(names[..n_direct].iter()) {
+        let Some(field) = name.strip_prefix("arrow_") else {
+            return items;
+        };
+        let Some(position) = all_fields.iter().position(|(_, f)| f == field) else {
+            return items;
+        };
+        if !seen.insert(field) {
+            return items;
+        }
+        direct.push((position, *id));
+    }
+    direct.sort_by_key(|(position, _)| *position);
+    direct.into_iter().map(|(_, id)| id).chain(items[n_direct..].iter().copied()).collect()
 }
 
 pub(crate) fn translate_impl_item<'tcx>(
