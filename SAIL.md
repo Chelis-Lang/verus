@@ -96,7 +96,7 @@ manifest: provenance and per-file digests) and
 `z3`, `vstd`, builtin libraries). The runtimes are built and packed by Sail's
 tooling on native hosts (`cargo xtask build-verus-engine`,
 `ci/engine-artifact.py pack`) and published by a maintainer; this repository's
-CI does not build them.
+CI does not build them (see [CI](#ci)).
 
 Sail's pin file names the release (`repo`, `release_tag`, `asset`) and records
 the archive SHA-256, the fork and upstream commits, the source lock digest, the
@@ -110,11 +110,26 @@ sha256sum -c engine-runtime.tar.gz.sha256   # or: shasum -a 256 -c
 
 Assets of a release a pin has named are never replaced or deleted.
 
-## GitHub Actions
+## CI
+
+`.github/workflows/sail-fork.yml` runs on every push to `sail` and every pull
+request into it, on Linux x86-64 only. It installs the toolchain from
+`rust-toolchain.toml`, gets Z3 with `source/tools/get-z3.sh`, builds vargo and
+then Verus (`vargo build --release`), runs the fork's regression tests
+(`rust_verify_test/tests/sail_vi*.rs`) and upstream's `basic` test, and
+rebuilds vstd the way the release does (`cargo-verus build --release
+--manifest-path vstd/Cargo.toml`).
+
+It shows that the fork builds, that vstd verifies, and that the fork's fixes
+still pass their tests. It does not run upstream's full `rust_verify_test`
+suite or build on macOS (the org's CI does not permit macOS runners). Sail's
+local qualification covers the full suite, and its release tooling builds and
+qualifies the macOS runtime natively. Actions are pinned by commit SHA (the
+repository requires it) and the workflow token is read-only.
 
 Upstream's workflows under `.github/workflows/` are kept unchanged so rebases
-stay clean, but GitHub Actions is disabled for this repository, so none of them
-(including the scheduled and release-publishing ones) run here.
+stay clean, but each is disabled in this repository, so none of them
+(including the scheduled and release-publishing ones) runs here.
 
 ## Upgrading to a new Verus
 

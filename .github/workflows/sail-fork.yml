@@ -1,0 +1,81 @@
+# The fork's own CI (see SAIL.md). Upstream's workflows are disabled in this
+# repository. Linux x86-64 only: macOS runtimes are built and qualified locally
+# by Sail's release tooling.
+name: sail-fork
+
+on:
+  push:
+    branches: [sail]
+  pull_request:
+    branches: [sail]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installs exactly what rust-toolchain.toml lists (including rustc-dev).
+      - name: install the pinned Rust toolchain
+        run: |
+          rustup --version
+          rustup toolchain install
+          rustc --version
+
+      - name: cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            tools/vargo -> target
+            source -> target
+            source -> target-verus
+
+      - name: get z3
+        working-directory: ./source
+        run: |
+          ./tools/get-z3.sh
+          ./z3 --version
+          echo "VERUS_Z3_PATH=$PWD/z3" >> "$GITHUB_ENV"
+
+      - name: build vargo
+        working-directory: ./tools/vargo
+        run: |
+          cargo build --release
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      # Builds Verus and builds and verifies vstd.
+      - name: build Verus and verify vstd
+        working-directory: ./source
+        run: vargo build --release
+
+      - name: fork regression tests and basic tests
+        working-directory: ./source
+        run: |
+          tests=()
+          for f in rust_verify_test/tests/sail_vi*.rs; do
+            tests+=(--test "$(basename "$f" .rs)")
+          done
+          echo "running: ${tests[*]} --test basic"
+          vargo test --release -p rust_verify_test "${tests[@]}" --test basic
+
+      # The release-style vstd build Sail's engine runtime uses (as upstream's
+      # release workflow does): verifies vstd from source/vstd with cargo-verus.
+      - name: release-style vstd build
+        working-directory: ./source
+        run: ./target-verus/release/cargo-verus build --release --manifest-path vstd/Cargo.toml
