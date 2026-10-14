@@ -3,10 +3,21 @@
 This repository is a fork of [Verus](https://github.com/verus-lang/verus)
 maintained for [Sail](https://github.com/Chelis-Lang/sail), a service that sits
 between Verus and its pinned Z3 to make verification fast and stable. (The Sail
-repository is private until Sail's open-source release.)
+repository is private until Sail's open-source release; references below to
+Sail ADRs, `VI-NNNN` issue entries and Sail paths point into it.)
 
-For Verus itself (documentation, releases, issues and contributions) use
-upstream [verus-lang/verus](https://github.com/verus-lang/verus).
+"Stock" here means unmodified upstream Verus. For Verus itself (documentation,
+releases and contributions) use upstream
+[verus-lang/verus](https://github.com/verus-lang/verus).
+
+## Where to report problems
+
+- Problems in Verus itself: upstream
+  [verus-lang/verus](https://github.com/verus-lang/verus/issues).
+- Issues about the fork's changes (the divergences, releases or CI below) are
+  welcome in this repository's issue tracker.
+- Security vulnerabilities: report them privately with **Report a
+  vulnerability** on this repository's Security tab, not in a public issue.
 
 ## Why it exists
 
@@ -26,8 +37,8 @@ under a narrow policy (Sail ADR 0039). A fix may only:
   verdicts or diagnostics.
 
 Anything that would change a verdict needs its own Sail ADR. Each fix is
-tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/`, with a
-reproduction. Fixes are not proposed upstream.
+tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
+repository), with a reproduction. Fixes are not proposed upstream.
 
 ## Branches and tags
 
@@ -37,12 +48,13 @@ reproduction. Fixes are not proposed upstream.
   1. one harness commit and one commit per fix, each fix with its regression
      test `source/rust_verify_test/tests/sail_vi<NNNN>_*.rs`;
   2. `feat: interactive repair engine`, the engine itself;
-  3. fork documentation (this file, the README notice and CONTRIBUTING.md),
-     which changes no source.
+  3. fork documentation and CI (this file, the README notice,
+     CONTRIBUTING.md and `.github/workflows/sail-fork.yml`), which change no
+     Verus source.
 - `pinned/<short sha>`: tags every fork commit a Sail runtime pin has ever
   named, so it stays reachable after `sail` is rebased or a fix is dropped.
   Tags are never moved or deleted.
-- `archive/*`: retained historical work.
+- `archive/*`: tags retaining historical work.
 
 Sail pins one full commit (currently `13a1176c`, tagged `pinned/13a1176c`),
 not the branch. Documentation commits move the `sail` tip past the pinned
@@ -50,7 +62,7 @@ commit; that is expected and does not affect the pin.
 
 ## Divergences from upstream
 
-`git log upstream/426d8b0..sail` (oldest first; source commits only):
+`git log --reverse upstream/426d8b0..pinned/13a1176c`:
 
 | Commit | Subject | Sail issue | What changes for a user | Regression test |
 |---|---|---|---|---|
@@ -64,16 +76,19 @@ commit; that is expected and does not affect the pin.
 | `fbde5ea3` | feat: add function-path to the timing function breakdown | VI-0010 | Timing entries gain a `function-path` field that distinguishes trait implementations sharing a friendly name; existing fields unchanged. | `sail_vi0010_function_path` |
 | `324c487c` | fix: give each crate its own log directory under cargo verus | VI-0004 | Under `cargo verus`, each crate logs to `<log-dir>/<crate>` (or `<crate>-bin`) instead of all crates clearing one shared directory. Direct runs unchanged. | `sail_vi0004_cargo_log_dirs` |
 | `af212563` | fix: declare enum arrow accessors in source order in the verifier | VI-0001 | The same accessor order for `cargo verus` builds, whose builtin macros come from the project's dependency source rather than this fork. | `sail_vi0001_impl_accessor_order` |
-| `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `driver.rs` and `verifier.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
+| `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
 
-Dropped fixes (no longer on `sail`; their commits stay in Sail's records):
+Dropped fixes (no longer on `sail`; the commits stay reachable from tag
+`pinned/4881cd0f`):
 
 - **VI-0005** (forwarded Verus arguments do not re-verify a fresh crate):
-  binding forwarded arguments in dep-info made every Sail repair rebuild,
-  because the repair passes the selected function as a forwarded argument.
+  `441d6cd9` and `b35e9226` bound forwarded arguments in dep-info, which made
+  every Sail repair rebuild, because the repair passes the selected function
+  as a forwarded argument.
 - **VI-0007** (errors from different modules print in run-dependent order):
-  a bucket-order fix was dropped because no deterministic order is provably
-  one that stock produces, which the policy requires.
+  `f98b87c5` printed diagnostics in bucket order and was dropped because no
+  deterministic order is provably one that stock produces, which the policy
+  requires.
 
 Not fixed: **VI-0011** (Cargo `no-vstd` metadata does not reach the launcher's
 macro-mode selection). The fix is not small: the launcher would have to
@@ -81,8 +96,9 @@ decode Cargo-Verus's per-package driver arguments.
 
 ## Releases
 
-Each pinned fork commit has prebuilt engine runtimes published as GitHub
-prereleases here:
+From `13a1176c` on, each pinned fork commit that Sail ships has prebuilt
+engine runtimes published here as GitHub prereleases. Earlier pinned commits
+(`4881cd0f`, `89709da7`, `d2b69aea`) have none.
 
 | Release tag | Platform | Sail pin |
 |---|---|---|
@@ -112,24 +128,49 @@ Assets of a release a pin has named are never replaced or deleted.
 
 ## CI
 
-`.github/workflows/sail-fork.yml` runs on every push to `sail` and every pull
-request into it, on Linux x86-64 only. It installs the toolchain from
-`rust-toolchain.toml`, gets Z3 with `source/tools/get-z3.sh`, builds vargo and
-then Verus (`vargo build --release`), runs the fork's regression tests
+`.github/workflows/sail-fork.yml` runs on every push to `sail`, every pull
+request into it, and on demand, on Linux x86-64 only. It installs the toolchain
+from `rust-toolchain.toml`, gets Z3 with `source/tools/get-z3.sh` and checks
+its SHA-256 against the Z3 Sail pins, builds vargo and then Verus
+(`vargo build --release`, which verifies vstd), runs the `rust_verify`, `vir`
+and `air` library tests, the fork's regression tests
 (`rust_verify_test/tests/sail_vi*.rs`) and upstream's `basic` test, and
 rebuilds vstd the way the release does (`cargo-verus build --release
 --manifest-path vstd/Cargo.toml`).
 
 It shows that the fork builds, that vstd verifies, and that the fork's fixes
-still pass their tests. It does not run upstream's full `rust_verify_test`
-suite or build on macOS (the org's CI does not permit macOS runners). Sail's
-local qualification covers the full suite, and its release tooling builds and
-qualifies the macOS runtime natively. Actions are pinned by commit SHA (the
-repository requires it) and the workflow token is read-only.
+still pass their tests. It only compiles the engine: it does not exercise the
+engine's behaviour, which Sail's own engine qualification covers. It does not
+run upstream's full `rust_verify_test` suite; Sail's local qualification does
+(at `13a1176c`: 4,645 passed, 2 failed, 58 ignored; the two failures are the
+`cargo_new_*` tests, which need a released version string). This CI uses no
+macOS runners; Sail's release tooling builds and qualifies the macOS runtime
+natively. Actions are pinned by commit SHA (the repository requires it) and
+the workflow token is read-only.
 
 Upstream's workflows under `.github/workflows/` are kept unchanged so rebases
 stay clean, but each is disabled in this repository, so none of them
 (including the scheduled and release-publishing ones) runs here.
+
+## Build and test locally
+
+On Linux or macOS, with `rustup` installed, from the repository root:
+
+```sh
+cd source
+./tools/get-z3.sh
+# Linux x86-64: check Z3 against the one Sail pins
+echo "e583c4186a45e72411fa2cb2048401eed03f0f8e5f24694676a8f6271a50b765  z3" | sha256sum -c
+export VERUS_Z3_PATH="$PWD/z3"
+source ../tools/activate          # builds vargo and puts it on PATH
+vargo build --release             # builds Verus and verifies vstd
+vargo test --release -p rust_verify_test \
+  $(for f in rust_verify_test/tests/sail_vi*.rs; do echo --test "$(basename "$f" .rs)"; done)
+```
+
+Upstream's [BUILD.md](BUILD.md) and its
+[CONTRIBUTING.md](https://github.com/verus-lang/verus/blob/426d8b01e7ffb910a36c15e1f870ff985bb61eef/CONTRIBUTING.md)
+(at the pinned upstream commit) cover the rest.
 
 ## Upgrading to a new Verus
 
