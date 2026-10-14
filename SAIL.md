@@ -177,6 +177,11 @@ Upstream's [BUILD.md](BUILD.md) and its
 1. Push the new upstream commit as `upstream/<short sha>`.
 2. On a review branch, rebase: `git rebase --onto upstream/<new> upstream/<old>`.
    Drop fixes the new release already contains; resolve conflicts per commit.
+   First set `user.name` and `user.email` explicitly in the clone (`git
+   config`) to the maintainer's identity: a rebase or cherry-pick rewrites
+   every committer, and with no identity configured Git falls back to
+   `user@hostname`. Check author and committer of every rewritten commit
+   before pushing.
 3. Run every `sail_vi*` regression test and the `rust_verify_test` suite, and
    record the results in Sail.
 4. After review, move `sail` to the branch. In Sail, update the upstream and
