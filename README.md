@@ -1,3 +1,6 @@
+> **This is Sail's fork of Verus**, used only to build the runtime of [Sail](https://github.com/Chelis-Lang/sail)'s opt-in repair engine (Sail's repository is private until its open-source release).
+> See [SAIL.md](SAIL.md) for what differs from upstream. For Verus itself, use [verus-lang/verus](https://github.com/verus-lang/verus).
+
 [![Quick Start](https://img.shields.io/badge/tutorial-quick%20start-informational)](https://verus-lang.github.io/verus/guide/getting_started.html) [![Verus docs](https://img.shields.io/badge/docs-verus-informational)](https://verus-lang.github.io/verus/guide/) [![Library Documentation](https://img.shields.io/badge/docs-vstd-informational)](https://verus-lang.github.io/verus/verusdoc/vstd/) [![project chat](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://verus-lang.zulipchat.com)
 
 # <a href="https://verus-lang.github.io/verus/verus/logo.html"><img height="60px" src="https://verus-lang.github.io/verus/verus/assets/verus-color.svg" alt="Verus" /></a> <a href="https://github.com/verus-lang/verus"><picture><source media="(prefers-color-scheme: dark)" height="60px" height="60px" srcset="https://verus-lang.github.io/verus/verus/assets/verus-text-dark.svg" /><img height="60px" height="60px" src="https://verus-lang.github.io/verus/verus/assets/verus-text-light.svg" alt="Verus" /></picture></a>
