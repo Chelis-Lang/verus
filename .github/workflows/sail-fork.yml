@@ -68,13 +68,15 @@ jobs:
         working-directory: ./source
         run: vargo build --release
 
-      # Library tests of the crates the engine commit changes.
+      # Library tests of the crates the engine commit changes. vargo test
+      # only takes rust_verify_test, so these use cargo directly (as Sail's
+      # engine qualification does).
       - name: rust_verify, vir and air library tests
         working-directory: ./source
         run: |
-          vargo test --release -p rust_verify --lib
-          vargo test --release -p vir --lib
-          vargo test --release -p air --lib
+          cargo test --release -p rust_verify --lib
+          cargo test --release -p vir --lib
+          cargo test --release -p air --lib
 
       - name: fork regression tests and basic tests
         working-directory: ./source
