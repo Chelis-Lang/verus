@@ -25,4 +25,4 @@ Please report security vulnerabilities privately using GitHub's **Report a vulne
 
 ## Building and testing
 
-Building Verus is described in [BUILD.md](BUILD.md). Upgrades and the fork's regression tests are described in [SAIL.md](SAIL.md).
+To build the fork and run its regression tests, see [Build and test locally](SAIL.md#build-and-test-locally) in SAIL.md. For upstream's build and test guidance, see [BUILD.md](BUILD.md) and upstream's [CONTRIBUTING.md](https://github.com/verus-lang/verus/blob/426d8b01e7ffb910a36c15e1f870ff985bb61eef/CONTRIBUTING.md) at the pinned upstream commit.
