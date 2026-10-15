@@ -292,6 +292,113 @@ pub struct BucketStats {
     pub rlimit_count: Option<(u64, u64)>,
 }
 
+/// Sail fork (M8.0): per-bucket stage timers, recorded only with `--time-expanded`
+/// and printed in its timing output. Times are wall-clock durations on the
+/// bucket's worker thread; `start` and `end` are offsets from the process's
+/// timing epoch (`sail_epoch`).
+#[derive(Clone, Debug, Default)]
+pub struct SailBucketStages {
+    pub bucket: String,
+    /// which `verify_crate_inner` call of this process (the engine's focused
+    /// phase is 0 and its full phase 1; a full-only run has only 0)
+    pub phase: usize,
+    pub worker: usize,
+    pub start: Duration,
+    pub end: Duration,
+    pub prune: Duration,
+    /// serialization and SHA-256 of the pruned krate: a proxy for computing a
+    /// content-addressed bucket key
+    pub key: Duration,
+    pub key_bytes: u64,
+    pub key_digest: String,
+    pub ctx_new: Duration,
+    pub ast_to_sst: Duration,
+    pub poly: Duration,
+    /// creating the main AIR context, excluding the prelude's AIR commands
+    pub air_context: Duration,
+    /// lowering the bucket context (fuel, datatypes, traits, function declarations) to AIR
+    pub bucket_context: Duration,
+    /// `OpGenerator` and `FunctionOpGenerator` calls (SST to AIR for each query)
+    pub op_generation: Duration,
+    /// time inside AIR commands, minus solver spawn and solver waits
+    pub air_command: Duration,
+    /// starting solver processes (the shim under Sail)
+    pub solver_spawn: Duration,
+    /// waiting for solver replies (the shim's cache or Z3 under Sail)
+    pub solver_wait: Duration,
+    /// the rest of `verify_bucket_outer`: reporting, bookkeeping, `Ctx::free`
+    pub other: Duration,
+    pub solver_processes: u64,
+    pub smt_bytes: u64,
+    pub smt_digest: String,
+    pub functions: usize,
+}
+
+/// Sail fork (M8.0): crate-level stage timers for one `verify_crate_inner` call.
+#[derive(Clone, Debug, Default)]
+pub struct SailCrateStages {
+    pub phase: usize,
+    pub start: Duration,
+    pub global_ctx: Duration,
+    pub simplify: Duration,
+    pub buckets_setup: Duration,
+    /// from starting the bucket workers to the last bucket's completion
+    pub bucket_phase: Duration,
+    /// joining workers and merging their results
+    pub merge: Duration,
+    /// chosen-trigger reporting and the rest
+    pub tail: Duration,
+    pub end: Duration,
+    pub num_threads: usize,
+    pub num_buckets: usize,
+}
+
+static SAIL_EPOCH: std::sync::OnceLock<(Instant, std::time::SystemTime)> =
+    std::sync::OnceLock::new();
+
+/// Sail fork (M8.0): the timing epoch of this process (set when the first
+/// `Verifier` is created), as an `Instant` and as wall-clock time.
+pub fn sail_epoch() -> (Instant, std::time::SystemTime) {
+    *SAIL_EPOCH.get_or_init(|| (Instant::now(), std::time::SystemTime::now()))
+}
+
+fn sail_since_epoch() -> Duration {
+    sail_epoch().0.elapsed()
+}
+
+thread_local! {
+    static SAIL_WORKER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Sail fork (M8.0): a SHA-256 sink for the bucket-key proxy.
+struct SailKeyWriter(sha2::Sha256, u64);
+
+impl std::io::Write for SailKeyWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        use sha2::Digest;
+        self.0.update(buf);
+        self.1 += buf.len() as u64;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn sail_add_smt(total: &mut air::context::SailSmtStats, s: Option<air::context::SailSmtStats>) {
+    use std::hash::Hasher;
+    if let Some(s) = s {
+        total.processes += s.processes;
+        total.spawn += s.spawn;
+        total.wait += s.wait;
+        total.bytes += s.bytes;
+        let mut h = std::hash::DefaultHasher::new();
+        h.write_u64(total.digest);
+        h.write_u64(s.digest);
+        total.digest = h.finish();
+    }
+}
+
 pub struct FunctionSmtStats {
     pub smt_time: Duration,
     pub rlimit_count: Option<u64>,
@@ -358,6 +465,13 @@ pub struct Verifier {
     expand_flag: bool,
 
     error_format: Option<ErrorOutputType>,
+
+    /// Sail fork (M8.0): stage timers (`--time-expanded`)
+    pub sail_bucket_stages: Vec<SailBucketStages>,
+    pub sail_crate_stages: Vec<SailCrateStages>,
+    sail_phase: usize,
+    sail_bucket_smt: air::context::SailSmtStats,
+    sail_bucket_inner: (Duration, Duration, Duration),
 }
 
 #[derive(serde::Serialize)]
@@ -504,6 +618,7 @@ impl Verifier {
         dep_tracker: crate::cargo_verus_dep_tracker::DepTracker,
     ) -> Verifier {
         let compile = args.compile || via_cargo_compile;
+        let _ = sail_epoch();
 
         Verifier {
             num_threads: 1,
@@ -547,6 +662,12 @@ impl Verifier {
 
             expand_flag: false,
             error_format: None,
+
+            sail_bucket_stages: Vec::new(),
+            sail_crate_stages: Vec::new(),
+            sail_phase: 0,
+            sail_bucket_smt: Default::default(),
+            sail_bucket_inner: Default::default(),
         }
     }
 
@@ -596,6 +717,12 @@ impl Verifier {
 
             expand_flag: self.expand_flag,
             error_format: self.error_format,
+
+            sail_bucket_stages: Vec::new(),
+            sail_crate_stages: Vec::new(),
+            sail_phase: self.sail_phase,
+            sail_bucket_smt: Default::default(),
+            sail_bucket_inner: Default::default(),
         }
     }
 
@@ -610,6 +737,7 @@ impl Verifier {
         self.func_times.extend(other.func_times);
         self.func_details.absorb_with(other.func_details, |lhs, rhs| lhs.absorb(rhs));
         self.deferred_errors.extend(other.deferred_errors);
+        self.sail_bucket_stages.extend(other.sail_bucket_stages);
     }
 
     fn get_bucket<'a>(&'a self, bucket_id: &BucketId) -> &'a Bucket {
@@ -1185,6 +1313,9 @@ impl Verifier {
             air::context::Context::new(message_interface.clone(), self.args.solver);
         air_context.set_ignore_unexpected_smt(self.args.ignore_unexpected_smt);
         air_context.set_debug(self.args.debugger);
+        if self.args.time_expanded {
+            air_context.sail_enable_stage_timers();
+        }
         if let Some(profile_file_name) = profile_file_name {
             air_context.set_profile_with_logfile_name(
                 profile_file_name.to_str().expect("invalid prover log path").to_owned(),
@@ -1371,6 +1502,8 @@ impl Verifier {
         } else {
             None
         };
+        let sail_air_context_start = Instant::now();
+        let sail_air_before = self.bucket_stats.get(bucket_id).map(|b| b.time_air);
         let mut air_context = self.new_air_context_with_prelude(
             ctx,
             message_interface.clone(),
@@ -1382,6 +1515,11 @@ impl Verifier {
             profile_all_file_name.as_ref(),
             vir::def::ProverChoice::DefaultProver,
         )?;
+        let sail_air_context = sail_air_context_start.elapsed().saturating_sub(
+            self.bucket_stats.get(bucket_id).map(|b| b.time_air).unwrap_or_default()
+                - sail_air_before.unwrap_or_default(),
+        );
+        let sail_bucket_context_start = Instant::now();
         if self.args.solver_version_check {
             air_context.set_expected_solver_version(match self.args.solver {
                 air::context::SmtSolver::Z3 => {
@@ -1461,13 +1599,22 @@ impl Verifier {
             bucket_context.push(CommandBatch::new(title, commands));
         }
         ctx.fun = None;
+        let sail_bucket_context = sail_bucket_context_start.elapsed();
 
         // Insert initial bucket context.
         self.run_command_batches(bucket_id, reporter, &mut air_context, &bucket_context);
 
         let bucket = self.get_bucket(bucket_id);
+        let mut sail_op_generation = Duration::ZERO;
+        let sail_opgen_start = Instant::now();
         let mut opgen = OpGenerator::new(ctx, krate, bucket.clone());
-        while let Some(mut function_opgen) = opgen.next()? {
+        sail_op_generation += sail_opgen_start.elapsed();
+        while let Some(mut function_opgen) = {
+            let sail_opgen_start = Instant::now();
+            let next = opgen.next();
+            sail_op_generation += sail_opgen_start.elapsed();
+            next
+        }? {
             let diagnostics_to_report: std::cell::RefCell<
                 Option<PanicOnDropVec<(Message, MessageLevel)>>,
             > = std::cell::RefCell::new(Some(PanicOnDropVec::new(Vec::new())));
@@ -1475,7 +1622,10 @@ impl Verifier {
             loop {
                 let mut next_op = None;
                 let mut expand_errors_diagnostic = None;
-                if let Some(r) = function_opgen.expand_errors_next(self.error_format) {
+                let sail_opgen_start = Instant::now();
+                let sail_expand_next = function_opgen.expand_errors_next(self.error_format);
+                sail_op_generation += sail_opgen_start.elapsed();
+                if let Some(r) = sail_expand_next {
                     match r {
                         Ok(op) => {
                             next_op = Some(op);
@@ -1488,7 +1638,9 @@ impl Verifier {
                 }
 
                 if next_op.is_none() {
+                    let sail_opgen_start = Instant::now();
                     next_op = function_opgen.next();
+                    sail_op_generation += sail_opgen_start.elapsed();
                 }
 
                 if next_op.is_none() {
@@ -1676,6 +1828,10 @@ impl Verifier {
                                         .expect("rlimit count in query context");
                             }
                             if do_spinoff {
+                                sail_add_smt(
+                                    &mut self.sail_bucket_smt,
+                                    query_air_context.sail_stage_timers(),
+                                );
                                 let (time_smt_init, time_smt_run) = query_air_context.get_time();
                                 spunoff_time_smt_init += time_smt_init;
                                 spunoff_time_smt_run += time_smt_run;
@@ -1936,6 +2092,8 @@ impl Verifier {
 
         let (time_smt_init, time_smt_run) = air_context.get_time();
         let rlimit_count = air_context.get_rlimit_count();
+        sail_add_smt(&mut self.sail_bucket_smt, air_context.sail_stage_timers());
+        self.sail_bucket_inner = (sail_air_context, sail_bucket_context, sail_op_generation);
 
         Ok(VerifyBucketOut {
             time_smt_init: time_smt_init + spunoff_time_smt_init,
@@ -1978,6 +2136,9 @@ impl Verifier {
         mut global_ctx: vir::context::GlobalCtx,
     ) -> Result<vir::context::GlobalCtx, VirErr> {
         let time_verify_start = Instant::now();
+        let sail_start = sail_since_epoch();
+        self.sail_bucket_smt = Default::default();
+        self.sail_bucket_inner = Default::default();
 
         self.bucket_stats.insert(bucket_id.clone(), Default::default());
 
@@ -1995,6 +2156,22 @@ impl Verifier {
             true,
             true,
         );
+        let sail_pruned = Instant::now();
+        let (sail_key_bytes, sail_key_digest) = if self.args.time_expanded {
+            use sha2::Digest;
+            let mut writer = SailKeyWriter(sha2::Sha256::new(), 0);
+            match bincode_next::serde::encode_into_std_write(
+                &pruned_krate,
+                &mut writer,
+                bincode_next::config::legacy(),
+            ) {
+                Ok(_) => (writer.1, hex::encode(writer.0.finalize())),
+                Err(_) => (writer.1, String::new()),
+            }
+        } else {
+            (0, String::new())
+        };
+        let sail_keyed = Instant::now();
         let vir::prune::PruneInfo {
             mono_abstract_datatypes,
             spec_fn_types,
@@ -2022,18 +2199,21 @@ impl Verifier {
             resolved_typs.unwrap(),
             self.args.debugger,
         )?;
+        let sail_ctx_new = Instant::now();
         if self.args.log_all || self.args.log_args.log_vir_poly {
             let mut file =
                 self.create_log_file(Some(&bucket_id), crate::config::VIR_POLY_FILE_SUFFIX)?;
             vir::printer::write_krate(&mut file, &pruned_krate, &self.args.log_args.vir_log_option);
         }
 
+        let sail_sst_start = Instant::now();
         let krate_sst = vir::ast_to_sst_crate::ast_to_sst_krate(
             &mut ctx,
             reporter,
             &self.get_bucket(bucket_id).funs,
             &pruned_krate,
         )?;
+        let sail_ast_to_sst = sail_sst_start.elapsed();
         if self.args.log_all || self.args.log_args.log_vir_sst {
             let mut file =
                 self.create_log_file(Some(&bucket_id), crate::config::VIR_SST_FILE_SUFFIX)?;
@@ -2046,10 +2226,14 @@ impl Verifier {
         if self.args.no_verify {
             return Ok(ctx.free());
         }
+        let sail_poly_start = Instant::now();
         let krate_sst = vir::poly::poly_krate_for_module(&mut ctx, &krate_sst);
+        let sail_poly = sail_poly_start.elapsed();
 
+        let sail_verify_bucket_start = Instant::now();
         let VerifyBucketOut { time_smt_init, time_smt_run, rlimit_count } =
             self.verify_bucket(reporter, &krate_sst, source_map, bucket_id, &mut ctx)?;
+        let sail_verify_bucket = sail_verify_bucket_start.elapsed();
 
         sail_engine::functions_observed(self,bucket_id);
         global_ctx = ctx.free();
@@ -2061,6 +2245,48 @@ impl Verifier {
         stats_bucket.time_smt_run = time_smt_run;
         stats_bucket.time_verify = time_verify_end - time_verify_start;
         stats_bucket.rlimit_count = rlimit_count;
+
+        if self.args.time_expanded {
+            let time_air = stats_bucket.time_air;
+            let smt = self.sail_bucket_smt;
+            let (air_context, bucket_context, op_generation) = self.sail_bucket_inner;
+            let air_command = time_air.saturating_sub(smt.wait + smt.spawn);
+            let accounted = (sail_pruned - time_verify_start)
+                + (sail_keyed - sail_pruned)
+                + (sail_ctx_new - sail_keyed)
+                + sail_ast_to_sst
+                + sail_poly
+                + sail_verify_bucket;
+            let functions = self.get_bucket(bucket_id).funs.len();
+            let verify_bucket_other = sail_verify_bucket
+                .saturating_sub(air_context + bucket_context + op_generation + time_air);
+            self.sail_bucket_stages.push(SailBucketStages {
+                bucket: bucket_id.friendly_name(),
+                phase: self.sail_phase,
+                worker: SAIL_WORKER.with(|w| w.get()),
+                start: sail_start,
+                end: sail_since_epoch(),
+                prune: sail_pruned - time_verify_start,
+                key: sail_keyed - sail_pruned,
+                key_bytes: sail_key_bytes,
+                key_digest: sail_key_digest,
+                ctx_new: sail_ctx_new - sail_keyed,
+                ast_to_sst: sail_ast_to_sst,
+                poly: sail_poly,
+                air_context,
+                bucket_context,
+                op_generation,
+                air_command,
+                solver_spawn: smt.spawn,
+                solver_wait: smt.wait,
+                other: verify_bucket_other
+                    + (time_verify_end - time_verify_start).saturating_sub(accounted),
+                solver_processes: smt.processes,
+                smt_bytes: smt.bytes,
+                smt_digest: format!("{:016x}", smt.digest),
+                functions,
+            });
+        }
 
         if self.args.trace {
             reporter.report_now(
@@ -2079,6 +2305,11 @@ impl Verifier {
         reporter: &impl Diagnostics,
     ) -> Result<(), VerifyErr> {
         let time_verify_sequential_start = Instant::now();
+        let mut sail_crate = SailCrateStages {
+            phase: self.sail_phase,
+            start: sail_since_epoch(),
+            ..Default::default()
+        };
 
         let krate = self.vir_crate.clone().expect("vir_crate should be initialized");
         let air_no_span = self.air_no_span.clone().expect("air_no_span should be initialized");
@@ -2114,8 +2345,11 @@ impl Verifier {
             self.args.no_bv_simplify,
             self.args.report_long_running,
         )?;
+        sail_crate.global_ctx = time_verify_sequential_start.elapsed();
+        let sail_simplify_start = Instant::now();
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
+        sail_crate.simplify = sail_simplify_start.elapsed();
 
         if self.args.log_all || self.args.log_args.log_vir_simple {
             let mut file = self.create_log_file(None, crate::config::VIR_SIMPLE_FILE_SUFFIX)?;
@@ -2165,6 +2399,11 @@ impl Verifier {
         let time_verify_sequential_end = Instant::now();
         self.time_verify_crate_sequential =
             time_verify_sequential_end - time_verify_sequential_start;
+        sail_crate.buckets_setup = self
+            .time_verify_crate_sequential
+            .saturating_sub(sail_crate.global_ctx + sail_crate.simplify);
+        sail_crate.num_buckets = bucket_ids.len();
+        let sail_bucket_phase_start = Instant::now();
 
         let source_map = compiler.sess.source_map();
 
@@ -2215,11 +2454,13 @@ impl Verifier {
                 // we create a clone of the verifier here to pass each thread its own local
                 // copy as we modify fields in the verifier struct. later, we merge the results
                 let mut thread_verifier = self.from_self();
+                let sail_worker = _tid + 1;
                 let thread_taskq = taskq.clone();
                 let thread_krate = krate.clone(); // is an Arc<T>
 
                 let worker_sender = sender.clone();
                 let worker = std::thread::spawn(move || {
+                    SAIL_WORKER.with(|w| w.set(sail_worker));
                     let r = std::panic::catch_unwind(|| {
                         let mut completed_tasks: Vec<Result<GlobalCtx, ()>> = Vec::new();
                         loop {
@@ -2542,6 +2783,7 @@ impl Verifier {
                 }
             }
 
+            let sail_merge_start = Instant::now();
             // join with all worker threads, they should all have exited by now.
             // merge the verifier and global contexts
             for worker in workers {
@@ -2566,6 +2808,7 @@ impl Verifier {
             if worker_emitted_error {
                 return Err(VerifyErr::Emitted);
             }
+            sail_crate.merge = sail_merge_start.elapsed();
 
             // print remaining messages
             for msgs in messages.drain(..) {
@@ -2593,6 +2836,9 @@ impl Verifier {
             }
         }
 
+        sail_crate.bucket_phase =
+            sail_bucket_phase_start.elapsed().saturating_sub(sail_crate.merge);
+        let sail_tail_start = Instant::now();
         if self.args.no_verify {
             return Ok(());
         }
@@ -2664,6 +2910,12 @@ impl Verifier {
                 ";
             reporter.report(&note(&span, msg).to_any());
         }
+
+        sail_crate.tail = sail_tail_start.elapsed();
+        sail_crate.end = sail_since_epoch();
+        sail_crate.num_threads = self.num_threads;
+        self.sail_crate_stages.push(sail_crate);
+        self.sail_phase += 1;
 
         Ok(())
     }

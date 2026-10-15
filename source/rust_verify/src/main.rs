@@ -413,6 +413,14 @@ pub fn main() {
                     }).collect::<Vec<serde_json::Value>>(),
                 },
             });
+            if verifier.args.time_expanded {
+                // Sail fork (M8.0): stage timers, only with --time-expanded. A new
+                // field; existing fields are unchanged.
+                times
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("sail-stages".to_string(), sail_stages_json(&verifier, total_time_0));
+            }
             if !verifier.encountered_vir_error {
                 times.as_object_mut().unwrap().insert(
                     "smt".to_string(),
@@ -480,6 +488,10 @@ pub fn main() {
             println!("            rust-to-vir:        {:>10} ms", vir_rust_to_vir.as_millis());
             println!("        verify-crate-time:  {:>10} ms", verify_crate_time.as_millis());
             println!("    unaccounted-time:   {:>10} ms", unaccounted.as_millis());
+            if verifier.args.time_expanded {
+                // Sail fork (M8.0): stage totals, only with --time-expanded.
+                sail_print_stages(&verifier);
+            }
 
             println!("\nverify-crate-time-breakdown");
             println!(
@@ -617,5 +629,111 @@ pub fn main() {
         Err(_) => {
             std::process::exit(1);
         }
+    }
+}
+
+/// Sail fork (M8.0): per-bucket and crate-level stage timers as JSON
+/// (microseconds; `start` and `end` are offsets from the timing epoch).
+fn sail_stages_json(
+    verifier: &rust_verify::verifier::Verifier,
+    main_start: std::time::Instant,
+) -> serde_json::Value {
+    let (epoch, epoch_wall) = rust_verify::verifier::sail_epoch();
+    let us = |d: std::time::Duration| d.as_micros() as u64;
+    let mut buckets: Vec<&rust_verify::verifier::SailBucketStages> =
+        verifier.sail_bucket_stages.iter().collect();
+    buckets.sort_by(|a, b| (a.phase, a.start, &a.bucket).cmp(&(b.phase, b.start, &b.bucket)));
+    serde_json::json!({
+        "version": 1,
+        "epoch-unix-us": epoch_wall
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_micros() as u64)
+            .unwrap_or(0),
+        "epoch-after-main-us": us(epoch.saturating_duration_since(main_start)),
+        "crate": verifier.sail_crate_stages.iter().map(|c| serde_json::json!({
+            "phase": c.phase,
+            "start": us(c.start),
+            "end": us(c.end),
+            "global-ctx": us(c.global_ctx),
+            "simplify": us(c.simplify),
+            "buckets-setup": us(c.buckets_setup),
+            "bucket-phase": us(c.bucket_phase),
+            "merge": us(c.merge),
+            "tail": us(c.tail),
+            "num-threads": c.num_threads,
+            "num-buckets": c.num_buckets,
+        })).collect::<Vec<_>>(),
+        "buckets": buckets.iter().map(|b| serde_json::json!({
+            "bucket": b.bucket,
+            "phase": b.phase,
+            "worker": b.worker,
+            "start": us(b.start),
+            "end": us(b.end),
+            "prune": us(b.prune),
+            "key": us(b.key),
+            "key-bytes": b.key_bytes,
+            "key-digest": b.key_digest,
+            "ctx-new": us(b.ctx_new),
+            "ast-to-sst": us(b.ast_to_sst),
+            "poly": us(b.poly),
+            "air-context": us(b.air_context),
+            "bucket-context": us(b.bucket_context),
+            "op-generation": us(b.op_generation),
+            "air-command": us(b.air_command),
+            "solver-spawn": us(b.solver_spawn),
+            "solver-wait": us(b.solver_wait),
+            "other": us(b.other),
+            "solver-processes": b.solver_processes,
+            "smt-bytes": b.smt_bytes,
+            "smt-digest": b.smt_digest,
+            "functions": b.functions,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Sail fork (M8.0): stage totals in the text timing output.
+fn sail_print_stages(verifier: &rust_verify::verifier::Verifier) {
+    let mut totals = [std::time::Duration::ZERO; 13];
+    for b in &verifier.sail_bucket_stages {
+        let stages = [
+            b.prune,
+            b.key,
+            b.ctx_new,
+            b.ast_to_sst,
+            b.poly,
+            b.air_context,
+            b.bucket_context,
+            b.op_generation,
+            b.air_command,
+            b.solver_spawn,
+            b.solver_wait,
+            b.other,
+            b.end.saturating_sub(b.start),
+        ];
+        for (total, stage) in totals.iter_mut().zip(stages) {
+            *total += stage;
+        }
+    }
+    let names = [
+        "prune",
+        "key",
+        "ctx-new",
+        "ast-to-sst",
+        "poly",
+        "air-context",
+        "bucket-context",
+        "op-generation",
+        "air-command",
+        "solver-spawn",
+        "solver-wait",
+        "other",
+        "bucket-total",
+    ];
+    println!(
+        "\nsail-stage-times ({} buckets, summed over threads)",
+        verifier.sail_bucket_stages.len()
+    );
+    for (name, total) in names.iter().zip(totals) {
+        println!("    {:<18} {:>10} ms", name, total.as_millis());
     }
 }
