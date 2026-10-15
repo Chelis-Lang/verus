@@ -44,7 +44,9 @@ repository), with a reproduction. Fixes are not proposed upstream.
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
   for example `upstream/426d8b0` (the current base) and `upstream/8dea4a2`.
-- `sail` (default): the current upstream base, then, in order:
+- `sail` (default): the current upstream base, then, in order (fixes made
+  after the engine sit on top of item 3 until the next upstream rebase moves
+  them below the engine):
   1. one harness commit and one commit per fix, each fix with its regression
      test `source/rust_verify_test/tests/sail_vi<NNNN>_*.rs`;
   2. `feat: interactive repair engine`, the engine itself;
@@ -62,7 +64,7 @@ commit; that is expected and does not affect the pin.
 
 ## Divergences from upstream
 
-`git log --reverse upstream/426d8b0..pinned/13a1176c`:
+`git log --reverse upstream/426d8b0..sail`, Verus source commits only:
 
 | Commit | Subject | Sail issue | What changes for a user | Regression test |
 |---|---|---|---|---|
@@ -77,6 +79,8 @@ commit; that is expected and does not affect the pin.
 | `324c487c` | fix: give each crate its own log directory under cargo verus | VI-0004 | Under `cargo verus`, each crate logs to `<log-dir>/<crate>` (or `<crate>-bin`) instead of all crates clearing one shared directory. Direct runs unchanged. | `sail_vi0004_cargo_log_dirs` |
 | `af212563` | fix: declare enum arrow accessors in source order in the verifier | VI-0001 | The same accessor order for `cargo verus` builds, whose builtin macros come from the project's dependency source rather than this fork. | `sail_vi0001_impl_accessor_order` |
 | `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
+| `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. Not yet in a Sail pin. | `sail_vi0017_timing_order` |
+| `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. Not yet in a Sail pin. | `sail_vi0007_error_order` |
 
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
@@ -85,10 +89,6 @@ Dropped fixes (no longer on `sail`; the commits stay reachable from tag
   `441d6cd9` and `b35e9226` bound forwarded arguments in dep-info, which made
   every Sail repair rebuild, because the repair passes the selected function
   as a forwarded argument.
-- **VI-0007** (errors from different modules print in run-dependent order):
-  `f98b87c5` printed diagnostics in bucket order and was dropped because no
-  deterministic order is provably one that stock produces, which the policy
-  requires.
 
 Not fixed: **VI-0011** (Cargo `no-vstd` metadata does not reach the launcher's
 macro-mode selection). The fix is not small: the launcher would have to
