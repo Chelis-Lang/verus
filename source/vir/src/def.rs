@@ -649,7 +649,7 @@ pub fn prefix_tuple_type(i: usize) -> Path {
     Arc::new(PathX { krate: CrateId::Internal, segments: Arc::new(vec![ident]) })
 }
 
-pub fn prefix_closure_type(i: usize) -> Path {
+pub fn prefix_closure_type(i: u64) -> Path {
     let ident = Arc::new(format!("{}{}", PREFIX_CLOSURE_TYPE, i));
     Arc::new(PathX { krate: CrateId::Internal, segments: Arc::new(vec![ident]) })
 }
@@ -675,7 +675,7 @@ pub(crate) fn impl_tuple(trait_suffix: &str, arity: usize) -> Ident {
     Arc::new(format!("{}{}{}", PREFIX_IMPL_TUPLE, trait_suffix, arity))
 }
 
-pub(crate) fn impl_closure(kind: ClosureKind, id: usize) -> Ident {
+pub(crate) fn impl_closure(kind: ClosureKind, id: u64) -> Ident {
     Arc::new(format!("{}{}{}", PREFIX_IMPL_CLOSURE, kind, id))
 }
 

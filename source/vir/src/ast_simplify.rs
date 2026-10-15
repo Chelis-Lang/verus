@@ -9,7 +9,7 @@ use crate::ast::VarBinders;
 use crate::ast::VarIdent;
 use crate::ast::{
     AssocTypeImpl, AutospecUsage, BinaryOp, Binder, BoundsCheck, BuiltinSpecFun, ByRef, CallTarget,
-    ChainedOp, ClosureKind, Constant, CtorPrintStyle, CtorUpdateTail, Datatype,
+    ChainedOp, ClosureId, ClosureKind, Constant, CtorPrintStyle, CtorUpdateTail, Datatype,
     DatatypeTransparency, DatatypeX, Dt, Expr, ExprX, Exprs, Field, FieldOpr, Fun, Function,
     FunctionKind, Ident, IntRange, ItemKind, Krate, KrateX, LogicalOp, Mode, MultiOp, Path,
     Pattern, PatternBinding, PatternX, Place, PlaceX, SpannedTyped, Stmt, StmtX, TraitImpl, Typ,
@@ -54,7 +54,7 @@ struct State {
     // Name of a datatype to represent each tuple arity
     tuple_typs: HashSet<usize>,
     // Name of a datatype to represent each closure
-    closure_typs: HashMap<usize, ClosureDatatype>,
+    closure_typs: HashMap<ClosureId, ClosureDatatype>,
     // Functions for which the corresponding FnDef type is used
     fndef_typs: HashSet<Fun>,
 }
@@ -92,14 +92,14 @@ impl State {
         typs: Typs,
         typ: Typ,
         kind: ClosureKind,
-        id: usize,
+        id: ClosureId,
     ) -> Path {
         let e = self.closure_typs.entry(id).or_insert(ClosureDatatype {
             enclosing_fun: fun.clone(),
             args: typs,
             output: typ,
             kind: kind,
-            path: crate::def::prefix_closure_type(id),
+            path: crate::def::prefix_closure_type(id.name),
         });
         assert!(&e.enclosing_fun == &fun);
         e.path.clone()
@@ -1550,7 +1550,8 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
     }
 
     let mut closures: Vec<_> = state.closure_typs.into_iter().collect();
-    closures.sort_by_key(|kv| kv.0);
+    // Stock's declaration order (rustc's DefIndex); see ClosureId.
+    closures.sort_by_key(|kv| kv.0.order);
     for (id, closure) in closures {
         // Right now, we translate the closure type into an a global datatype.
         //
@@ -1616,7 +1617,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
         ));
         let impl_path = Arc::new(crate::ast::PathX {
             krate: CrateId::Internal,
-            segments: Arc::new(vec![crate::def::impl_closure(closure.kind, id)]),
+            segments: Arc::new(vec![crate::def::impl_closure(closure.kind, id.name)]),
         });
         let trait_typ_args = Arc::new(vec![self_typ.clone(), args_tuple_typ.clone()]);
         let trait_implx = crate::ast::TraitImplX {

@@ -277,7 +277,7 @@ pub enum TypX {
     /// `spec_fn` type (t1, ..., tn) -> t0.
     SpecFn(Typs, Typ),
     /// Executable function types (with a requires and ensures)
-    AnonymousClosure(Typs, Typ, ClosureKind, usize),
+    AnonymousClosure(Typs, Typ, ClosureKind, ClosureId),
     /// Corresponds to Rust's FnDef type
     /// Typs are generic type args
     /// If Fun is a trait function, then the Option<Fun> has the statically resolved
@@ -1085,6 +1085,39 @@ pub struct CtorUpdateTail {
     /// i.e., this is all the fields that are moved or copied out of the input struct.
     /// This information is needed by resolution analysis.
     pub taken_fields: Arc<Vec<(Ident, UnfinalizedReadKind)>>,
+}
+
+/// Identity of an anonymous closure type.
+///
+/// Sail fork (VI-0019): `name` is the number in the closure's SMT names
+/// (`anonymous_closure%<name>`, `impl_closure&%<kind><name>`). It is the local
+/// half of rustc's `DefPathHash` for the closure, which depends only on the
+/// closure's own definition path (enclosing items and per-parent
+/// disambiguators), and which rustc guarantees is unique within the crate.
+/// Stock Verus uses rustc's crate-wide `DefIndex` instead, so inserting any
+/// item renumbered every later closure in the crate.
+///
+/// `order` is that `DefIndex`. It is used only to order the closure
+/// declarations exactly as stock Verus does; equality and hashing use `name`
+/// alone, so no other order depends on unrelated items.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToDebugSNode)]
+pub struct ClosureId {
+    pub name: u64,
+    pub order: usize,
+}
+
+impl PartialEq for ClosureId {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for ClosureId {}
+
+impl std::hash::Hash for ClosureId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, ToDebugSNode, Hash, PartialEq, Eq)]
