@@ -43,7 +43,9 @@ fn sail_m8_stage_timers_with_time_expanded() {
         // every bucket sends its prelude and context to a solver process
         assert!(b["smt-bytes"].as_u64().unwrap() > 0);
         assert_eq!(b["smt-digest"].as_str().unwrap().len(), 16);
-        assert_eq!(b["key-digest"].as_str().unwrap().len(), 64);
+        // the bucket-key proxy runs only with SAIL_M8_KEY_PROXY set
+        let key_len = b["key-digest"].as_str().unwrap().len();
+        assert!(key_len == 0 || key_len == 64);
         let parts: u64 = [
             "prune",
             "key",
@@ -68,6 +70,16 @@ fn sail_m8_stage_timers_with_time_expanded() {
     let bb = buckets.iter().find(|b| b["bucket"] == "module b").unwrap();
     assert_ne!(a["smt-digest"], bb["smt-digest"]);
     assert_eq!(bb["functions"], 2);
+    // front-end stages of the GHOST pass, in order
+    let front: Vec<&str> = stages["front"]
+        .as_array()
+        .expect("front stages")
+        .iter()
+        .map(|s| s["stage"].as_str().unwrap())
+        .collect();
+    for name in ["import", "hir-typeck", "rust-to-vir", "well-formed", "autospec-modes", "lifetime-borrowck"] {
+        assert!(front.contains(&name), "{:?}", front);
+    }
 }
 
 #[test]

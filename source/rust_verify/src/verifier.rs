@@ -472,6 +472,9 @@ pub struct Verifier {
     sail_phase: usize,
     sail_bucket_smt: air::context::SailSmtStats,
     sail_bucket_inner: (Duration, Duration, Duration),
+    /// Sail fork (M11-8): front-end stage timers of the GHOST pass, in order
+    /// (`--time-expanded`)
+    pub sail_front: Vec<(&'static str, Duration)>,
 }
 
 #[derive(serde::Serialize)]
@@ -664,6 +667,7 @@ impl Verifier {
             error_format: None,
 
             sail_bucket_stages: Vec::new(),
+            sail_front: Vec::new(),
             sail_crate_stages: Vec::new(),
             sail_phase: 0,
             sail_bucket_smt: Default::default(),
@@ -719,6 +723,7 @@ impl Verifier {
             error_format: self.error_format,
 
             sail_bucket_stages: Vec::new(),
+            sail_front: Vec::new(),
             sail_crate_stages: Vec::new(),
             sail_phase: self.sail_phase,
             sail_bucket_smt: Default::default(),
@@ -2157,7 +2162,9 @@ impl Verifier {
             true,
         );
         let sail_pruned = Instant::now();
-        let (sail_key_bytes, sail_key_digest) = if self.args.time_expanded {
+        let (sail_key_bytes, sail_key_digest) = if self.args.time_expanded
+            && std::env::var_os("SAIL_M8_KEY_PROXY").is_some()
+        {
             use sha2::Digest;
             let mut writer = SailKeyWriter(sha2::Sha256::new(), 0);
             match bincode_next::serde::encode_into_std_write(
@@ -2940,6 +2947,15 @@ impl Verifier {
         result
     }
 
+    /// Sail fork (M11-8): records a front-end stage ending now; returns now.
+    pub(crate) fn sail_front_mark(&mut self, name: &'static str, since: Instant) -> Instant {
+        let now = Instant::now();
+        if self.args.time_expanded {
+            self.sail_front.push((name, now - since));
+        }
+        now
+    }
+
     fn construct_vir_crate<'tcx>(
         &mut self,
         tcx: TyCtxt<'tcx>,
@@ -2948,6 +2964,7 @@ impl Verifier {
         other_vir_crates: Vec<Krate>,
         diagnostics: &impl air::messages::Diagnostics,
     ) -> Result<bool, (Vec<VirErr>, Vec<vir::ast::VirErrAs>)> {
+        let sail_t = Instant::now();
         if self.args.no_lifetime {
             rustc_mir_build_verus::verus::set_verus_aware_def_ids(Arc::new(HashSet::new()));
         }
@@ -3026,6 +3043,7 @@ impl Verifier {
             crate::erase::setup_verus_aware_ids(&crate_items);
         }
 
+        let sail_t = self.sail_front_mark("vir-setup-and-crate-items", sail_t);
         let time_hir0 = Instant::now();
 
         rustc_hir_analysis_verus::check_crate(tcx);
@@ -3046,6 +3064,11 @@ impl Verifier {
                 .map_err(map_errs_diagnostics)?;
 
         let time2 = Instant::now();
+        let _ = sail_t;
+        if self.args.time_expanded {
+            self.sail_front.push(("hir-typeck", time_hir1 - time_hir0));
+        }
+        let sail_t = self.sail_front_mark("rust-to-vir", time1);
         let vir_crate = vir::ast_sort::sort_krate(&vir_crate);
         self.current_crate_modules = Some(vir_crate.modules.clone());
         self.crate_items = Some(Arc::new(crate_items));
@@ -3089,6 +3112,7 @@ impl Verifier {
         );
         let vir_crate =
             vir::traits::merge_external_traits(vir_crate).map_err(map_err_diagnostics)?;
+        let sail_t = self.sail_front_mark("sort-merge-prune", sail_t);
 
         if self.args.log_all || self.args.log_args.log_impl_names {
             let mut file = self
@@ -3119,6 +3143,7 @@ impl Verifier {
             current_vir_crate.clone(),
         )
         .map_err(map_err_diagnostics)?;
+        let sail_t = self.sail_front_mark("export-crate", sail_t);
 
         if self.args.log_all || self.args.log_args.log_vir {
             let mut file = self
@@ -3138,6 +3163,7 @@ impl Verifier {
             vir::safe_api::check_safe_api(&vir_crate).map_err(|e| (vec![e], Vec::new()))?;
         }
 
+        let sail_t = self.sail_front_mark("traits", sail_t);
         let check_crate_result1 = vir::well_formed::check_one_crate(&current_vir_crate);
         let check_crate_result = vir::well_formed::check_crate(
             &vir_crate,
@@ -3195,10 +3221,12 @@ impl Verifier {
             }
         }
 
+        let sail_t = self.sail_front_mark("well-formed", sail_t);
         let vir_crate =
             vir::autospec::resolve_autospec(&vir_crate).map_err(|e| (vec![e], Vec::new()))?;
         let (vir_crate, erasure_modes) =
             vir::modes::check_crate(&vir_crate).map_err(|es| (es, Vec::new()))?;
+        let sail_t = self.sail_front_mark("autospec-modes", sail_t);
 
         self.vir_crate = Some(vir_crate.clone());
         self.warning_ctx = Some(Arc::new(warning_ctx));
@@ -3239,12 +3267,14 @@ impl Verifier {
             .map_err(|e| (vec![e], Vec::new()))?;
         }
 
+        let sail_t = self.sail_front_mark("erasure-setup", sail_t);
         // These can invoke mir_borrowck when opaque types are involved.
         // Thus, we can only run these after initializing erasure_hints
         tcx.hir_for_each_module(|module| {
             tcx.ensure_ok().check_private_in_public(module);
             tcx.ensure_ok().check_mod_privacy(module);
         });
+        self.sail_front_mark("privacy", sail_t);
 
         let time4 = Instant::now();
         self.time_vir = time4 - time0;
@@ -3494,6 +3524,7 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
         tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
         self.rust_end_time = Some(Instant::now());
+        let sail_t = self.rust_end_time.unwrap();
 
         if let Some(_guar) = compiler.sess.dcx().has_errors() {
             self.verifier.encountered_error = true;
@@ -3528,6 +3559,7 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
 
         rustc_interface::passes::write_dep_info(tcx);
         self.verifier.crate_id = Some(mk_crate_id(tcx, LOCAL_CRATE));
+        self.verifier.sail_front_mark("dep-info", sail_t);
 
         let time_import0 = Instant::now();
         let imported =
@@ -3543,6 +3575,8 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
             };
         let time_import1 = Instant::now();
         self.verifier.time_import = time_import1 - time_import0;
+        self.verifier.sail_front_mark("import", time_import0);
+        let sail_t = Instant::now();
         let verus_items = Arc::new(crate::verus_items::from_diagnostic_items(tcx));
         self.verifier.verus_items = Some(verus_items.clone());
         let spans = SpanContextX::new(
@@ -3553,6 +3587,7 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
             self.verus_externs.as_ref(),
         );
 
+        let sail_t = self.verifier.sail_front_mark("verus-items-spans", sail_t);
         {
             let reporter = Reporter::new(&spans, compiler);
             if self.verifier.args.trace {
@@ -3615,6 +3650,8 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
                 )
             };
             self.tc_end_time = Some(Instant::now());
+            let _ = sail_t;
+            self.verifier.sail_front_mark("trait-conflicts", self.tc_start_time.unwrap());
             match status {
                 Ok(msgs) => {
                     if msgs.len() > 0 {
@@ -3641,9 +3678,11 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
             return rustc_driver::Compilation::Stop;
         }
 
+        let sail_t = Instant::now();
         if !self.verifier.args.no_lifetime {
             self.run_lifetime_checks_on_verus_aware_items(tcx);
         }
+        self.verifier.sail_front_mark("lifetime-borrowck", sail_t);
 
         if let Some(_guar) = compiler.sess.dcx().has_errors() {
             return rustc_driver::Compilation::Stop;

@@ -650,6 +650,10 @@ fn sail_stages_json(
             .map(|d| d.as_micros() as u64)
             .unwrap_or(0),
         "epoch-after-main-us": us(epoch.saturating_duration_since(main_start)),
+        "front": verifier.sail_front.iter().map(|(n, d)| serde_json::json!({
+            "stage": n,
+            "us": us(*d),
+        })).collect::<Vec<_>>(),
         "crate": verifier.sail_crate_stages.iter().map(|c| serde_json::json!({
             "phase": c.phase,
             "start": us(c.start),
@@ -693,6 +697,10 @@ fn sail_stages_json(
 
 /// Sail fork (M8.0): stage totals in the text timing output.
 fn sail_print_stages(verifier: &rust_verify::verifier::Verifier) {
+    println!("\nsail-front-times (GHOST pass, in order)");
+    for (name, d) in &verifier.sail_front {
+        println!("    sail-front {:<28} {:>10} ms", name, d.as_millis());
+    }
     let mut totals = [std::time::Duration::ZERO; 13];
     for b in &verifier.sail_bucket_stages {
         let stages = [
