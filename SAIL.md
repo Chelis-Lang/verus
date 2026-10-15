@@ -43,6 +43,13 @@ Anything that would change a verdict needs its own Sail ADR. Each fix is
 tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
 repository), with a reproduction. Fixes are not proposed upstream.
 
+One change is of another kind, under its own Sail ADR (0048): Sail ships
+vstd prebuilt, compiled with its registry sources named by rustc's virtual
+rustc-dev base, and the driver maps that base back to the user's own
+registry directory when Sail asks (`SAIL_RUSTC_DEV_SOURCE_BASE`), so
+diagnostics read exactly as stock's do for a vstd compiled on the user's
+machine. Without the variable the driver is unchanged.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
@@ -84,6 +91,7 @@ commit; that is expected and does not affect the pin.
 | `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
 | `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
 | `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
+| `b4450da9` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
 
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
