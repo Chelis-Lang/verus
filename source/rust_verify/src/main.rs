@@ -744,4 +744,18 @@ fn sail_print_stages(verifier: &rust_verify::verifier::Verifier) {
     for (name, total) in names.iter().zip(totals) {
         println!("    {:<18} {:>10} ms", name, total.as_millis());
     }
+    for c in &verifier.sail_crate_stages {
+        println!(
+            "sail-crate-stages phase {} threads {} buckets {}: global-ctx {} ms, simplify {} ms, buckets-setup {} ms, bucket-phase {} ms, merge {} ms, tail {} ms",
+            c.phase,
+            c.num_threads,
+            c.num_buckets,
+            c.global_ctx.as_millis(),
+            c.simplify.as_millis(),
+            c.buckets_setup.as_millis(),
+            c.bucket_phase.as_millis(),
+            c.merge.as_millis(),
+            c.tail.as_millis(),
+        );
+    }
 }
