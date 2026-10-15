@@ -1230,7 +1230,13 @@ pub(crate) fn mid_ty_to_vir_ghost<'tcx>(
             };
 
             let ret = t_rec(&sig.output().skip_binder())?.0;
-            let id = def.as_local().unwrap().local_def_index.index();
+            // Sail fork (VI-0019): name the closure by its definition path, not
+            // by its crate-wide index, so inserting an item elsewhere does not
+            // rename it. The index still orders declarations as stock does.
+            let id = vir::ast::ClosureId {
+                name: tcx.def_path_hash(*def).local_hash().as_u64(),
+                order: def.as_local().unwrap().local_def_index.index(),
+            };
 
             let kind = substs.as_closure().kind();
             let kind = match kind {
