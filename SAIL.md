@@ -37,7 +37,10 @@ under a narrow policy (Sail ADR 0039). A fix may only:
 - make stock's output deterministic by choosing one of the outputs stock can
   already produce; or
 - correct structured output (`--output-json`, timing, logs) without changing
-  verdicts or diagnostics.
+  verdicts or diagnostics; or
+- rename closure types by a stable, path-derived number (Sail ADR 0048): the
+  SMT output equals stock's up to a one-to-one renaming of those numbers, in
+  stock's order.
 
 Anything that would change a verdict needs its own Sail ADR. Each fix is
 tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
@@ -84,6 +87,7 @@ commit; that is expected and does not affect the pin.
 | `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
 | `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
 | `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
+| `8d03ab54` | fix: name closure types by definition path, not crate-wide index | VI-0019 | Closure types are named `anonymous_closure%<N>` and `impl_closure&%<kind><N>` with `N` the local half of the closure's `DefPathHash` instead of rustc's crate-wide `DefIndex`, so inserting an item no longer renames closures in other modules. Declarations keep stock's order; the SMT input equals stock's up to that renaming (and the printer's line wrapping). Not yet pinned in Sail. | `sail_vi0019_closure_ids` |
 
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
