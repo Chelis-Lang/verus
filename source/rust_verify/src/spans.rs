@@ -176,6 +176,7 @@ impl SpanContextX {
             }
             for (hash, original) in files.iter() {
                 let info = if let Some(filename) = original.filename.clone() {
+                    let filename = crate::sail_source_base::imported_name(filename);
                     ExternSourceInfo::Delayed { filename, hash: hash.clone() }
                 } else {
                     ExternSourceInfo::None
@@ -281,6 +282,20 @@ impl SpanContextX {
         assert!(lo <= hi);
         assert!(hi <= end_pos);
         Some(SpanData { lo, hi, ctxt: rustc_span::SyntaxContext::root(), parent: None }.span())
+    }
+
+    /// The local files as an exported crate records them (Sail: registry
+    /// sources of a prebuilt crate under the virtual base, see
+    /// `sail_source_base`).
+    pub(crate) fn exported_local_files(&self) -> HashMap<Vec<u8>, FileStartEndPos> {
+        self.local_files
+            .iter()
+            .map(|(hash, pos)| {
+                let mut pos = pos.clone();
+                pos.filename = pos.filename.map(crate::sail_source_base::exported_name);
+                (hash.clone(), pos)
+            })
+            .collect()
     }
 
     pub(crate) fn get_next_span_id(&self) -> u64 {

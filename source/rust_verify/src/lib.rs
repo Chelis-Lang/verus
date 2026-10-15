@@ -64,6 +64,7 @@ pub mod rust_to_vir_func;
 pub mod rust_to_vir_global;
 mod rust_to_vir_impl;
 pub mod rust_to_vir_trait;
+pub mod sail_source_base;
 #[cfg(feature = "singular")]
 pub mod singular;
 mod spans;
