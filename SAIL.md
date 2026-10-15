@@ -58,7 +58,7 @@ repository), with a reproduction. Fixes are not proposed upstream.
   Tags are never moved or deleted.
 - `archive/*`: tags retaining historical work.
 
-Sail pins one full commit (currently `13a1176c`, tagged `pinned/13a1176c`),
+Sail pins one full commit (currently `73dea021`, tagged `pinned/73dea021`),
 not the branch. Documentation commits move the `sail` tip past the pinned
 commit; that is expected and does not affect the pin.
 
@@ -79,8 +79,8 @@ commit; that is expected and does not affect the pin.
 | `324c487c` | fix: give each crate its own log directory under cargo verus | VI-0004 | Under `cargo verus`, each crate logs to `<log-dir>/<crate>` (or `<crate>-bin`) instead of all crates clearing one shared directory. Direct runs unchanged. | `sail_vi0004_cargo_log_dirs` |
 | `af212563` | fix: declare enum arrow accessors in source order in the verifier | VI-0001 | The same accessor order for `cargo verus` builds, whose builtin macros come from the project's dependency source rather than this fork. | `sail_vi0001_impl_accessor_order` |
 | `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
-| `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. Not yet in a Sail pin. | `sail_vi0017_timing_order` |
-| `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. Not yet in a Sail pin. | `sail_vi0007_error_order` |
+| `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
+| `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
 
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
@@ -102,8 +102,10 @@ engine runtimes published here as GitHub prereleases. Earlier pinned commits
 
 | Release tag | Platform | Sail pin |
 |---|---|---|
-| `engine-runtime-13a1176c-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` |
-| `engine-runtime-13a1176c-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` |
+| `engine-runtime-13a1176c-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (until `73dea021`) |
+| `engine-runtime-13a1176c-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (until `73dea021`) |
+| `engine-runtime-73dea021-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` |
+| `engine-runtime-73dea021-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` |
 
 Each release has the archive `engine-runtime.tar.gz` and its checksum file
 `engine-runtime.tar.gz.sha256`. The archive holds `sail-build.json` (the build
