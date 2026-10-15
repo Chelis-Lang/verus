@@ -345,6 +345,34 @@ pub fn main() {
                 // REVIEW check these are consistent
             }
 
+            // Sail fork (VI-0017): stock lists modules by elapsed time and a
+            // module's functions in `HashMap` order, so these arrays change
+            // order between identical runs. List modules by name (a module's
+            // buckets by time, as stock does) and functions by friendly name,
+            // then identity. Entries and values are unchanged.
+            let by_module = |m: &vir::ast::Path| rust_verify::verifier::module_name(m);
+            let mut verify_times = verify_times.clone();
+            verify_times.sort_by(|(ma, ta), (mb, tb)| {
+                by_module(ma).cmp(&by_module(mb)).then_with(|| tb.cmp(ta))
+            });
+            let mut air_times = air_times.clone();
+            air_times.sort_by(|(ma, ta), (mb, tb)| {
+                by_module(ma).cmp(&by_module(mb)).then_with(|| tb.cmp(ta))
+            });
+            let mut smt_init_stats = smt_init_stats.clone();
+            smt_init_stats
+                .sort_by(|(ma, _), (mb, _)| by_module(ma).cmp(&by_module(mb)).then(ma.cmp(mb)));
+            let mut smt_run_stats = smt_run_stats.clone();
+            smt_run_stats
+                .sort_by(|(ma, _), (mb, _)| by_module(ma).cmp(&by_module(mb)).then(ma.cmp(mb)));
+            for functions in smt_function_breakdown.values_mut() {
+                functions.sort_by(|(fa, _), (fb, _)| {
+                    vir::ast_util::fun_as_friendly_rust_name(fa)
+                        .cmp(&vir::ast_util::fun_as_friendly_rust_name(fb))
+                        .then_with(|| fa.cmp(fb))
+                });
+            }
+
             let mut times = serde_json::json!({
                 "verus-build": {
                     "profile": build_info.profile.to_string(),
