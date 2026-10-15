@@ -21,13 +21,16 @@ releases and contributions) use upstream
 
 ## Why it exists
 
-The fork builds one thing: the runtime of Sail's opt-in interactive repair
-engine, which runs focused verification of one function and then an
-independent full verification in a single compiler invocation. Default
-`sail verify` does not use this fork; it runs the stock pinned Verus release.
+The fork builds Sail's Verus runtime. Sail runs it for every verification
+(default `sail verify` included; Sail ADR 0043) and ships it in Sail's
+release archives; stock Verus is used only as the oracle Sail's conformance
+tests compare against. The same runtime holds Sail's opt-in interactive
+repair engine, which runs focused verification of one function and then an
+independent full verification in a single compiler invocation.
 
-Some upstream behaviour hurts the engine directly: output whose order varies
-between runs (which defeats exact cached-versus-fresh comparison) and
+Some upstream behaviour hurts Sail directly: output whose order varies
+between runs (which defeats Sail's exact-prefix solver cache and exact
+cached-versus-fresh comparison) and
 structured output that is wrong or ambiguous. The fork fixes those issues
 under a narrow policy (Sail ADR 0039). A fix may only:
 
@@ -144,8 +147,7 @@ It shows that the fork builds, that vstd verifies, and that the fork's fixes
 still pass their tests. It only compiles the engine: it does not exercise the
 engine's behaviour, which Sail's own engine qualification covers. It does not
 run upstream's full `rust_verify_test` suite; Sail's local qualification does
-(at `13a1176c`: 4,645 passed, 2 failed, 58 ignored; the two failures are the
-`cargo_new_*` tests, which need a released version string). This CI uses no
+(with the `73dea021` fixes: 4,649 passed, 0 failed, 58 ignored). This CI uses no
 macOS runners; Sail's release tooling builds and qualifies the macOS runtime
 natively. Actions are pinned by commit SHA (the repository requires it) and
 the workflow token is read-only.
