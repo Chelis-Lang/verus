@@ -259,6 +259,18 @@ fn with_json_func_details(err: &TestErr, func: &str, body: impl FnOnce(&FuncDeta
         .get(func)
         .unwrap_or_else(|| panic!("func-details has no entry for `{}`", func));
 
+    // Sail fork (VI-0021): preserve every existing set-membership assertion
+    // below, and also check the actual serialized order before deserializing.
+    for name in ["obligation_proof_notes", "failed_proof_notes"] {
+        let notes: Vec<_> = details_json[name]
+            .as_array()
+            .expect("proof notes must be an array")
+            .iter()
+            .map(|note| note.as_str().expect("proof notes must be strings"))
+            .collect();
+        assert!(notes.windows(2).all(|pair| pair[0] < pair[1]), "{func}: unsorted {name}");
+    }
+
     let details =
         serde_json::from_value(details_json.clone()).expect("failed to deserialize FuncDetails");
 
