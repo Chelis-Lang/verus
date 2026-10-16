@@ -100,6 +100,8 @@ commit; that is expected and does not affect the pin.
 | `3f7f6c51` | fix: order imported closure index ties deterministically | VI-0019 | Imported trait-default bodies can contain distinct closures with the same crate-local `DefIndex`. Break those declaration-order ties by the stable closure name, rather than hash-map iteration. The two-crate regression observes both exported closure types and checks their order over sixteen fresh processes. Not yet pinned in Sail. | `sail_vi0019_closure_ids` |
 | `b4450da9` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
 
+| `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Candidate; combined runtime qualification pending. | `output_json` multi-note tests assert serialized order and original set membership |
+
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
 
