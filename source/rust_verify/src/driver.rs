@@ -9,7 +9,11 @@ use rustc_span::{Span, sym};
 use std::time::{Duration, Instant};
 
 struct DefaultCallbacks;
-impl rustc_driver::Callbacks for DefaultCallbacks {}
+impl rustc_driver::Callbacks for DefaultCallbacks {
+    fn config(&mut self, config: &mut rustc_interface::interface::Config) {
+        crate::sail_source_base::configure(config);
+    }
+}
 
 pub fn run_rustc_compiler_directly(rustc_args: &Vec<String>) -> () {
     rustc_driver::run_compiler(&rustc_args, &mut DefaultCallbacks)
@@ -61,6 +65,7 @@ impl rustc_driver::Callbacks for TCCallbacks {
     fn config<'tcx>(&mut self, cfg: &mut rustc_interface::interface::Config) {
         cfg.file_loader =
             Some(Box::new(crate::trait_check::TCFileLoader { rust_code: self.code.clone() }));
+        crate::sail_source_base::configure(cfg);
     }
 
     fn after_expansion<'tcx>(
@@ -134,6 +139,7 @@ impl rustc_driver::Callbacks for CompilerCallbacksEraseMacro {
     // Adding `override_stability` and `stable_attr` functions is a hacky solution specifically for verifying core,
     // to fix an issue with stability attributes.
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
+        crate::sail_source_base::configure(config);
         if self.override_stability {
             config.override_queries = Some(|_session, providers| {
                 providers.queries.hir_attr_map = |tcx, owner_id| {
@@ -372,7 +378,9 @@ pub fn run(
         return (verifier, stats, Err(()));
     }
 
-    crate::verifier::sail_engine_sealed(!verifier.encountered_vir_error && verifier.count_errors == 0);
+    crate::verifier::sail_engine_sealed(
+        !verifier.encountered_vir_error && verifier.count_errors == 0,
+    );
     (verifier, stats, Ok(()))
 }
 

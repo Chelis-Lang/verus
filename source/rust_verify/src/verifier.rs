@@ -2811,7 +2811,7 @@ impl Verifier {
         // Export crate if requested.
         let crate_metadata = crate::import_export::CrateMetadata {
             crate_id: spans.local_crate.as_u64(),
-            original_files: spans.local_files.clone(),
+            original_files: spans.exported_local_files(),
         };
 
         let user_filter =
@@ -3145,6 +3145,7 @@ fn lower_to_hir<'tcx>(
 
 impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
+        crate::sail_source_base::configure(config);
         if let Some(mut dep_tracker) = self.verifier.dep_tracker.take() {
             let import_dep_if_present = &self
                 .verifier
