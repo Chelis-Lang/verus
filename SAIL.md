@@ -85,6 +85,8 @@ commit; that is expected and does not affect the pin.
 | `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
 | `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
 
+| `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Candidate; combined runtime qualification pending. | `output_json` multi-note tests assert serialized order and original set membership |
+
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
 
