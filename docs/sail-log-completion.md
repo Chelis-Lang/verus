@@ -1,7 +1,7 @@
 # Paired log completion experiment
 
 Status: isolated source experiment on combined candidate `8a373f81`; not built,
-qualified, selected, pinned or published. There is no Sail consumer change.
+qualified, selected, pinned or published. There is no selected Sail consumer or runtime change.
 The old markerless actual-work attempt remains failed. Its ordinary timing
 samples describe the original runtime, not this instrumentation.
 
@@ -106,7 +106,22 @@ recommends, expansion, profiling and error paths. Missing/failed capture remains
 a refusal. Both historical comparison arms need separately bound instrumented
 builds; this source patch does not qualify an old binary or retrofit old logs.
 
-## Consumer remains blocked
+## Source-only grammar helper and consumer draft
+
+`source/air/examples/sail_no_query.rs` reuses genuine SISE and AIR parsing,
+constructs no Context and starts no solver. It accepts at most 8 MiB of UTF8 AIR
+and 256 levels including its wrapper, checks EOF and balanced push/pop scopes,
+and rejects every query command. Successful stdout is exactly
+`SAIL-AIR-NO-QUERY 1` followed by LF. It validates the genuine command grammar,
+not semantic typing or proof validity. Direct test sources cover recognized
+commands, malformed declarations/expressions, query forms, scope errors,
+invalid UTF8 and size/depth bounds; they have not been run.
+
+A separate explicit opt-in Sail observer draft can bind this helper's actual
+source and executable, bound each process/output, and retain zero-context log
+hashes. Neither that draft nor this helper is built, qualified or selected.
+The default observer must continue to refuse all old incomplete evidence.
+
 
 A future consumer must require a uniquely placed EOF marker in each paired
 file, matching version and mode, with no duplicate marker or trailing bytes.
