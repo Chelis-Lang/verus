@@ -158,6 +158,22 @@ impl SmtProcess {
         self.transcript_log = Some(writer);
     }
 
+    pub(crate) fn has_transcript_log(&self) -> bool {
+        self.transcript_log.is_some()
+    }
+
+    /// Complete the log only after every CommandsHandle has returned its response.
+    /// This does not send commands, start work, or wait for a response.
+    pub(crate) fn complete_transcript_log(&mut self) -> std::io::Result<()> {
+        if let Some(writer) = &mut self.transcript_log {
+            crate::log_completion::write_used_transcript_completion(
+                writer.as_mut(),
+                self.responses_buf_recv.is_some(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Send commands to the solver, wait for acknowledgement, and return responses
     pub(crate) fn send_commands(&mut self, commands: Vec<u8>) -> Vec<String> {
         self.send_commands_async(commands).wait()

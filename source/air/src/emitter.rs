@@ -40,6 +40,21 @@ impl Emitter {
         self.log = writer;
     }
 
+    pub(crate) fn has_log(&self) -> bool {
+        self.log.is_some()
+    }
+
+    /// Write only to the log, never to the pending solver-command buffer.
+    pub(crate) fn complete_log(
+        &mut self,
+        mode: crate::log_completion::Mode,
+    ) -> std::io::Result<()> {
+        if let Some(writer) = &mut self.log {
+            crate::log_completion::write_air_completion(writer.as_mut(), mode)?;
+        }
+        Ok(())
+    }
+
     fn is_none(&self) -> bool {
         self.pipe_buffer.is_none() && self.log.is_none()
     }
