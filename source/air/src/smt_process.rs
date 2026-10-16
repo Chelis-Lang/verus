@@ -257,3 +257,51 @@ impl Drop for SmtProcess {
         }
     }
 }
+
+#[cfg(test)]
+mod completion_process_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct Writer(Rc<RefCell<Vec<u8>>>);
+
+    impl Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the explicitly admitted pinned Z3; run in native qualification"]
+    fn actual_solver_completion_tracks_response_ownership() {
+        let bytes = Rc::new(RefCell::new(Vec::new()));
+        let mut process = SmtProcess::launch(&SmtSolver::Z3, Some(Box::new(Writer(bytes.clone()))));
+        let request = b"(check-sat)\n".to_vec();
+        let pending = process.send_commands_async(request.clone());
+        // The real async send transferred response ownership to this handle.
+        // Completion must refuse before any footer I/O even if Z3 already replied.
+        assert!(pending.smt_process.responses_buf_recv.is_none());
+        let before_refusal = bytes.borrow().clone();
+        assert!(pending.smt_process.complete_transcript_log().is_err());
+        assert_eq!(*bytes.borrow(), before_refusal);
+        let response = pending.wait();
+        assert_eq!(response, vec!["sat".to_string()]);
+        assert!(process.responses_buf_recv.is_some());
+        let before_completion = bytes.borrow().clone();
+        process.complete_transcript_log().unwrap();
+        let mut expected = before_completion.clone();
+        expected.extend_from_slice(b";; SAIL-COMPLETE 1 transcript process-used\n");
+        assert_eq!(*bytes.borrow(), expected);
+        println!("actual request bytes: {:?}", request);
+        println!("actual completed response: {:?}", response);
+        println!("transcript before refused footer: {:?}", before_refusal);
+        println!("transcript after real wait: {:?}", before_completion);
+        println!("transcript after completed footer: {:?}", bytes.borrow());
+    }
+}
