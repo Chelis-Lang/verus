@@ -362,8 +362,21 @@ pub struct Verifier {
 
 #[derive(serde::Serialize)]
 pub struct FuncDetails {
+    #[serde(serialize_with = "serialize_ordered_proof_notes")]
     pub obligation_proof_notes: HashSet<String>,
+    #[serde(serialize_with = "serialize_ordered_proof_notes")]
     pub failed_proof_notes: HashSet<String>,
+}
+
+// Sail fork (VI-0021): note membership and merging stay set operations, but
+// JSON arrays must not depend on a fresh process's HashSet iteration order.
+fn serialize_ordered_proof_notes<S: serde::Serializer>(
+    notes: &HashSet<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut ordered: Vec<&String> = notes.iter().collect();
+    ordered.sort_unstable();
+    serde::Serialize::serialize(&ordered, serializer)
 }
 
 impl Default for FuncDetails {
