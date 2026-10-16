@@ -1550,8 +1550,10 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
     }
 
     let mut closures: Vec<_> = state.closure_typs.into_iter().collect();
-    // Stock's declaration order (rustc's DefIndex); see ClosureId.
-    closures.sort_by_key(|kv| kv.0.order);
+    // Preserve stock's local declaration order (rustc's DefIndex). Imported
+    // trait default bodies can contain closures from different crates with
+    // the same local index; break those ties independently of HashMap order.
+    closures.sort_by_key(|kv| (kv.0.order, kv.0.name));
     for (id, closure) in closures {
         // Right now, we translate the closure type into an a global datatype.
         //

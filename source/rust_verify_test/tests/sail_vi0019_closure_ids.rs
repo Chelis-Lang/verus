@@ -101,3 +101,118 @@ fn first_difference(a: &str, b: &str) -> String {
     }
     format!("lengths differ: {} and {} lines", a.lines().count(), b.lines().count())
 }
+
+// Imported executable trait defaults retain their bodies in exported VIR.
+// Their closure DefIndexes are local to each crate and can therefore tie.
+const IMPORTED_DEFAULT: &str = verus_code_str! {
+    pub trait T {
+        fn f(&self, x: u8) -> (r: u8) ensures r == x {
+            let c = |y: u8| -> (r: u8) ensures r == y { y };
+            c(x)
+        }
+    }
+};
+
+fn checked_run(dir: &std::path::Path, code: &str, options: &[String]) {
+    let file = dir.join("test.rs");
+    std::fs::write(&file, code).expect("write input");
+    let options: Vec<_> = options.iter().map(String::as_str).collect();
+    let result = run_verus(&options, dir, &file, true, false);
+    assert!(
+        result.status.success(),
+        "verification failed: {}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr),
+    );
+}
+
+#[test]
+fn sail_vi0019_imported_closure_index_ties_have_stable_order() {
+    let root = tempfile::tempdir().expect("test directory");
+    let mut imports = Vec::new();
+    for name in ["dep_a", "dep_b"] {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).expect("dependency directory");
+        let export = dir.join("export.vir");
+        checked_run(
+            &dir,
+            IMPORTED_DEFAULT,
+            &[
+                format!("--crate-name={name}"),
+                "--compile".to_string(),
+                "--sail-raw=--export".to_string(),
+                format!("--sail-raw={}", export.display()),
+            ],
+        );
+        imports.extend([
+            "--sail-raw=--extern".to_string(),
+            format!("--sail-raw={name}={}", dir.join("libtest.rlib").display()),
+            "--sail-raw=--import".to_string(),
+            format!("--sail-raw={name}={}", export.display()),
+        ]);
+    }
+    let client = verus_code_str! {
+        struct S;
+        impl dep_a::T for S {}
+        impl dep_b::T for S {}
+        fn test() -> (r: u8) ensures r == 3 {
+            let s = S;
+            dep_a::T::f(&s, dep_b::T::f(&s, 3))
+        }
+    };
+    let client = format!("extern crate dep_a; extern crate dep_b;\n{client}");
+    let mut first = None;
+    for round in 0..16 {
+        let dir = root.path().join(format!("client{round}"));
+        std::fs::create_dir(&dir).expect("client directory");
+        let logs = dir.join("logs");
+        let mut options = imports.clone();
+        options.extend([
+            "--crate-name=sail_vi0019_client".to_string(),
+            "--sail-raw=--log".to_string(),
+            "--sail-raw=vir".to_string(),
+            "--sail-raw=--log".to_string(),
+            "--sail-raw=vir-simple".to_string(),
+            "--sail-raw=--log-dir".to_string(),
+            format!("--sail-raw={}", logs.display()),
+        ]);
+        checked_run(&dir, &client, &options);
+        let vir = std::fs::read_to_string(logs.join("crate.vir")).expect("VIR log");
+        let simple =
+            std::fs::read_to_string(logs.join("crate-simple.vir")).expect("simplified VIR log");
+        let mut ids: Vec<_> = vir
+            .split("(ClosureId :name ")
+            .skip(1)
+            .map(|id| {
+                let mut words = id.split_whitespace();
+                let name = words.next().expect("closure name").parse::<u64>().expect("number");
+                assert_eq!(words.next(), Some(":order"));
+                let order = words
+                    .next()
+                    .expect("closure order")
+                    .trim_end_matches(')')
+                    .parse::<usize>()
+                    .expect("number");
+                (order, name)
+            })
+            .collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 2, "fixture must retain both foreign closures");
+        assert_eq!(ids[0].0, ids[1].0, "fixture must exercise an index tie");
+        let actual: Vec<u64> = simple
+            .lines()
+            .filter_map(|line| {
+                let rest =
+                    line.split("(Datatype :name (Dt Path crate::anonymous_closure%").nth(1)?;
+                Some(rest.split(')').next().expect("closure name").parse().expect("number"))
+            })
+            .collect();
+        assert_eq!(actual, ids.iter().map(|(_, name)| *name).collect::<Vec<_>>());
+        if let Some(expected) = &first {
+            assert_eq!(&actual, expected, "closure declaration order changed across runs");
+        } else {
+            first = Some(actual);
+        }
+    }
+}
