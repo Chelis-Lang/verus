@@ -1555,7 +1555,7 @@ impl Verifier {
                                     "Found singular command when Verus is compiled without Singular feature"
                                 );
                             }
-                            let mut spinoff_context;
+                            let mut spinoff_context = None;
                             let do_spinoff = (cmds.prover_choice
                                 == vir::def::ProverChoice::Nonlinear)
                                 || (cmds.prover_choice == vir::def::ProverChoice::BitVector)
@@ -1598,30 +1598,32 @@ impl Verifier {
                                 } else {
                                     "spinoff_all"
                                 };
-                                spinoff_context = self.new_air_context_with_bucket_context(
-                                    message_interface.clone(),
-                                    function_opgen.ctx(),
-                                    reporter,
-                                    bucket_id,
-                                    Some((&(function.x.name).path, spinoff_context_counter)),
-                                    &bucket_context,
-                                    is_recommend,
-                                    &cmds.context.span,
-                                    profile_file_name.as_ref(),
-                                    spinoff_reason,
-                                    cmds.prover_choice,
-                                )?;
+                                let spinoff_context = spinoff_context.insert(
+                                    self.new_air_context_with_bucket_context(
+                                        message_interface.clone(),
+                                        function_opgen.ctx(),
+                                        reporter,
+                                        bucket_id,
+                                        Some((&(function.x.name).path, spinoff_context_counter)),
+                                        &bucket_context,
+                                        is_recommend,
+                                        &cmds.context.span,
+                                        profile_file_name.as_ref(),
+                                        spinoff_reason,
+                                        cmds.prover_choice,
+                                    )?,
+                                );
                                 // for bitvector, only one query, no push/pop
                                 if cmds.prover_choice == vir::def::ProverChoice::BitVector {
                                     spinoff_context.set_single_check_query();
                                 }
                                 // Apply prover-specific SMT tuning.
                                 self.apply_per_query_smt_options(
-                                    &mut spinoff_context,
+                                    spinoff_context,
                                     cmds.prover_choice,
                                 );
                                 spinoff_context_counter += 1;
-                                &mut spinoff_context
+                                spinoff_context
                             } else {
                                 &mut air_context
                             };
@@ -1792,6 +1794,11 @@ impl Verifier {
                                     flush_diagnostics_to_report = true;
                                 }
                             }
+                            if let Some(context) = spinoff_context {
+                                context.complete_transcript_logs().map_err(|err| {
+                                    io_vir_err("could not complete spinoff logs".to_string(), err)
+                                })?;
+                            }
                         }
 
                         // collect the smt run time from this command into the function duration
@@ -1936,6 +1943,9 @@ impl Verifier {
 
         let (time_smt_init, time_smt_run) = air_context.get_time();
         let rlimit_count = air_context.get_rlimit_count();
+        air_context.complete_transcript_logs().map_err(|err| {
+            io_vir_err("could not complete bucket logs".to_string(), err)
+        })?;
 
         Ok(VerifyBucketOut {
             time_smt_init: time_smt_init + spunoff_time_smt_init,

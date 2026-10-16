@@ -236,6 +236,35 @@ impl Context {
         }
     }
 
+    /// Mark a successfully completed pair of initial AIR and transcript logs.
+    ///
+    /// Consuming the context prevents commands after the marker. Completion is
+    /// log-only: pending SMT commands are not flushed, no process is started,
+    /// and no response is awaited. A missing member of the pair leaves both
+    /// logs unchanged, preserving independent single-log options. Consumers
+    /// must refuse such unpaired or incomplete evidence.
+    ///
+    /// This records completed execution, not a successful verification verdict.
+    pub fn complete_transcript_logs(mut self) -> std::io::Result<()> {
+        if !self.air_initial_log.has_log() {
+            return Ok(());
+        }
+        let mode = if let Some(process) = &mut self.smt_process {
+            if !process.has_transcript_log() {
+                return Ok(());
+            }
+            process.complete_transcript_log()?;
+            crate::log_completion::Mode::ProcessUsed
+        } else {
+            let Some(writer) = &mut self.smt_transcript_log else {
+                return Ok(());
+            };
+            crate::log_completion::write_zero_transcript_completion(writer.as_mut())?;
+            crate::log_completion::Mode::ZeroProcess
+        };
+        self.air_initial_log.complete_log(mode)
+    }
+
     pub fn set_debug(&mut self, debug: bool) {
         self.debug = debug;
     }
