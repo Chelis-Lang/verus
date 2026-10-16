@@ -1074,7 +1074,8 @@ pub struct CtorUpdateTail {
 /// item renumbered every later closure in the crate.
 ///
 /// `order` is that `DefIndex`. It is used only to order the closure
-/// declarations exactly as stock Verus does; equality and hashing use `name`
+/// declarations in stock's local order. Different imported crates can reuse
+/// that index, so ties are broken by `name`. Equality and hashing use `name`
 /// alone, so no other order depends on unrelated items.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct ClosureId {

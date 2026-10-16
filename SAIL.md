@@ -38,9 +38,11 @@ under a narrow policy (Sail ADR 0039). A fix may only:
   already produce; or
 - correct structured output (`--output-json`, timing, logs) without changing
   verdicts or diagnostics; or
-- rename closure types by a stable, path-derived number (Sail ADR 0048): the
+- rename closure types by a stable, path-derived number (Sail ADR 0049): the
   SMT output equals stock's up to a one-to-one renaming of those numbers, in
-  stock's order.
+  stock's local order. Imported trait-default bodies can carry the same local
+  index from different crates; those declaration ties are ordered by the stable
+  closure name, independently of hash-map iteration.
 
 Anything that would change a verdict needs its own Sail ADR. Each fix is
 tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
