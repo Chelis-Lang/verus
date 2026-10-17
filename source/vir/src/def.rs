@@ -46,6 +46,8 @@ const SUFFIX_TYPE_PARAM: &str = "&";
 const SUFFIX_RUSTC_ID: &str = "~";
 const SUFFIX_DECORATE_TYPE_PARAM: &str = "&.";
 const SUFFIX_REC_PARAM: &str = "!$";
+// Reserved compiler namespace: '%' cannot occur in a source Rust identifier.
+const PREFIX_SPEC_PARAM: &str = "spec%param%";
 const SUFFIX_PATH: &str = ".";
 const PREFIX_ESCAPE: &str = "$~";
 const PREFIX_FUEL_ID: &str = "fuel%";
@@ -523,8 +525,19 @@ pub(crate) fn types() -> Vec<&'static str> {
 }
 
 pub fn rename_rec_param(ident: &VarIdent, n: usize) -> VarIdent {
-    let dis = crate::ast::VarIdentDisambiguate::VirParamRecursion(n);
+    use crate::ast::VarIdentDisambiguate;
+    let dis = match ident.1 {
+        VarIdentDisambiguate::VirSpecParam(index)
+        | VarIdentDisambiguate::VirSpecParamRecursion { index, .. } => {
+            VarIdentDisambiguate::VirSpecParamRecursion { index, depth: n }
+        }
+        _ => VarIdentDisambiguate::VirParamRecursion(n),
+    };
     crate::ast::VarIdent(ident.0.clone(), dis)
+}
+
+pub(crate) fn spec_param_name(ident: &VarIdent, index: usize) -> VarIdent {
+    crate::ast::VarIdent(ident.0.clone(), crate::ast::VarIdentDisambiguate::VirSpecParam(index))
 }
 
 pub fn slice_type() -> Path {
@@ -1301,6 +1314,15 @@ pub fn unique_var_name(
             out.push_str(RES_INF_TEMP_SEPARATOR);
             write!(&mut out, "{}", id).unwrap();
         }
+        VarIdentDisambiguate::VirSpecParam(index) => {
+            out.clear();
+            write!(&mut out, "{}{}{}", PREFIX_SPEC_PARAM, index, SUFFIX_PARAM).unwrap();
+        }
+        VarIdentDisambiguate::VirSpecParamRecursion { index, depth } => {
+            out.clear();
+            write!(&mut out, "{}{}{}{}", PREFIX_SPEC_PARAM, index, SUFFIX_REC_PARAM, depth)
+                .unwrap();
+        }
     }
     out
 }
@@ -1390,5 +1412,67 @@ pub fn fn_fp_postcondition_name(op: UninterpretedFloatBinaryOp) -> Fun {
         UninterpretedFloatBinaryOp::Ge => {
             crate::fun!(CrateId::Vstd => "std_specs", "cmp",  "ge_ensures")
         }
+    }
+}
+
+#[cfg(test)]
+mod spec_parameter_name_tests {
+    use super::{rename_rec_param, spec_param_name, unique_var_name, user_local_name};
+    use crate::ast::{VarIdent, VarIdentDisambiguate};
+    use crate::ast_util::LowerUniqueVar;
+    use std::sync::Arc;
+
+    fn source(name: &str) -> VarIdent {
+        VarIdent(Arc::new(name.to_owned()), VarIdentDisambiguate::RustcId(17))
+    }
+
+    #[test]
+    fn spec_parameter_position_is_stable_without_losing_source_spelling() {
+        let before = spec_param_name(&source("before"), 0);
+        let after = spec_param_name(&source("after"), 0);
+        assert_eq!(&*before.lower(), "spec%param%0!");
+        assert_eq!(before.lower(), after.lower());
+        assert_eq!(user_local_name(&before), "before");
+        assert_eq!(user_local_name(&after), "after");
+        assert_ne!(before.lower(), spec_param_name(&source("before"), 1).lower());
+    }
+
+    #[test]
+    fn recursive_copies_retain_parameter_positions_and_separate_depths() {
+        let before = spec_param_name(&source("before"), 2);
+        let after = spec_param_name(&source("after"), 2);
+        assert_eq!(rename_rec_param(&before, 1).lower(), rename_rec_param(&after, 1).lower());
+        assert_eq!(&*rename_rec_param(&before, 1).lower(), "spec%param%2!$1");
+        assert_ne!(rename_rec_param(&before, 1).lower(), rename_rec_param(&before, 2).lower());
+        assert_eq!(
+            rename_rec_param(&rename_rec_param(&before, 1), 2).lower(),
+            rename_rec_param(&before, 2).lower(),
+        );
+        assert_eq!(user_local_name(&rename_rec_param(&after, 2)), "after");
+        // Ordinary proof/exec formals retain their existing lowering.
+        let ordinary = VarIdent(Arc::new("ordinary".into()), VarIdentDisambiguate::VirParam);
+        assert_eq!(&*rename_rec_param(&ordinary, 1).lower(), "ordinary!$1");
+    }
+
+    #[test]
+    fn unused_positions_do_not_collapse_or_capture_source_binders() {
+        let names: Vec<_> = ["used", "unused", "last"]
+            .iter()
+            .enumerate()
+            .map(|(index, name)| spec_param_name(&source(name), index).lower())
+            .collect();
+        assert_eq!(&*names[0], "spec%param%0!");
+        assert_eq!(&*names[1], "spec%param%1!");
+        assert_eq!(&*names[2], "spec%param%2!");
+        assert_ne!(names[0], names[1]);
+        assert_ne!(names[0], names[2]);
+        assert_ne!(
+            names[0].as_str(),
+            unique_var_name("used".into(), VarIdentDisambiguate::VirExprNoNumber)
+        );
+        assert_ne!(
+            names[0].as_str(),
+            unique_var_name("used".into(), VarIdentDisambiguate::VirParam)
+        );
     }
 }
