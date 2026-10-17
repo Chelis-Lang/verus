@@ -98,6 +98,7 @@ fn sail_vi0023_recursive_parameter_copies_keep_positions() {
             }
         }"#,
         r#"proof fn check() {
+            reveal_with_fuel(crate::defs::value, 2);
             assert(crate::defs::value(1) == 1);
         }"#,
     );
