@@ -382,6 +382,9 @@ pub fn run(
     crate::verifier::sail_engine_sealed(
         !verifier.encountered_vir_error && verifier.count_errors == 0,
     );
+    crate::sail_compiler_inputs::finish(
+        !verifier.encountered_vir_error && verifier.count_errors == 0,
+    );
     (verifier, stats, Ok(()))
 }
 
