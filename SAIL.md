@@ -49,6 +49,15 @@ Anything that would change a verdict needs its own Sail ADR. Each fix is
 tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
 repository), with a reproduction. Fixes are not proposed upstream.
 
+The unselected VI-0023 candidate extends this policy under proposed Sail
+ADR 0054: spec formal parameters receive reserved solver names by position,
+including the corresponding termination-proof parameters. Source identifiers
+and diagnostic spans remain intact; proof and executable parameters are not
+renamed by this rule. This changes solver input names and therefore requires
+fresh matching vstd/exports and full verdict/diagnostic qualification before
+selection. The combined candidate below is not qualified by its source review
+or by measurements of either component alone.
+
 One change is of another kind, under its own Sail ADR (0048): Sail ships
 vstd prebuilt, compiled with its registry sources named by rustc's virtual
 rustc-dev base, and the driver maps that base back to the user's own
@@ -133,6 +142,8 @@ the pinned commit; that is expected and does not affect the runtime source.
 | `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Included in the qualified cc7 runtime. | `output_json` multi-note tests assert serialized order and original set membership |
 | `cc7bbce4` | fix: retain full definition-path identity for closures | VI-0019 | Equality, hashing and SMT names retain both stable crate ID and local definition hash; the declaration index only orders output. Fresh matching runtime, vstd and exports are required. | two VIR identity tests and the 16-run `sail_vi0019_closure_ids` two-crate regression |
 | `425ec23b`, `a82c0b82` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
+| `fd26e888`, `aead21d2` | perf: stabilize spec formal solver names by position; fix: align spec termination proof parameters | VI-0023, proposed Sail ADR 0054 | Candidate positional names preserve imported caller axioms across a formal rename. Unselected; component measurements do not qualify the combined runtime. | Three spec-name VIR tests and five `sail_vi0023_spec_parameter_names` cases |
+| `de1f0e1a` | test: isolate spec parameter regression scratch directories | VI-0023 | Gives each regression case its own harness scratch name, including when exact cases run in separate concurrent processes. Assertions and runtime behavior are unchanged. | All five cases with four test threads and four separate-process workers |
 
 ### Qualified full closure identity
 
