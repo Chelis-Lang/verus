@@ -38,11 +38,12 @@ under a narrow policy (Sail ADR 0039). A fix may only:
   already produce; or
 - correct structured output (`--output-json`, timing, logs) without changing
   verdicts or diagnostics; or
-- rename closure types by a stable, path-derived number (Sail ADR 0049): the
-  SMT output equals stock's up to a one-to-one renaming of those numbers, in
-  stock's local order. Imported trait-default bodies can carry the same local
-  index from different crates; those declaration ties are ordered by the stable
-  closure name, independently of hash-map iteration.
+- rename closure types by the complete stable crate-qualified definition
+  identity (Sail ADR 0049): both 64-bit halves of rustc's `DefPathHash` enter
+  equality, hashing and names. The SMT output equals stock's up to a one-to-one
+  renaming of closure symbols, in stock's local order. Imported trait-default
+  bodies can carry the same local index from different crates; those declaration
+  ties are ordered by the complete identity, independently of hash-map iteration.
 
 Anything that would change a verdict needs its own Sail ADR. Each fix is
 tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
@@ -73,9 +74,11 @@ machine. Without the variable the driver is unchanged.
   Tags are never moved or deleted.
 - `archive/*`: tags retaining historical work.
 
-Sail pins one full commit (currently `73dea021`, tagged `pinned/73dea021`),
-not the branch. Documentation commits move the `sail` tip past the pinned
-commit; that is expected and does not affect the pin.
+The qualified full-identity runtime is built from
+`cc7bbce4fdc8cf7e4256668b3ee8431343bdb6b9`; its matching Sail pin takes effect
+when the pin PR merges. Sail pins that full source commit, not the branch or
+this documentation successor. Documentation commits move the `sail` tip past
+the pinned commit; that is expected and does not affect the runtime source.
 
 ## Divergences from upstream
 
@@ -96,21 +99,21 @@ commit; that is expected and does not affect the pin.
 | `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
 | `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
 | `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
-| `8d03ab54` | fix: name closure types by definition path, not crate-wide index | VI-0019 | Closure types are named `anonymous_closure%<N>` and `impl_closure&%<kind><N>` with `N` the local half of the closure's `DefPathHash` instead of rustc's crate-wide `DefIndex`, so inserting an item no longer renames closures in other modules. Declarations keep stock's order; the SMT input equals stock's up to that renaming (and the printer's line wrapping). Not yet pinned in Sail. | `sail_vi0019_closure_ids` |
-| `3f7f6c51` | fix: order imported closure index ties deterministically | VI-0019 | Imported trait-default bodies can contain distinct closures with the same crate-local `DefIndex`. Break those declaration-order ties by the stable closure name, rather than hash-map iteration. The two-crate regression observes both exported closure types and checks their order over sixteen fresh processes. Not yet pinned in Sail. | `sail_vi0019_closure_ids` |
+| `8d03ab54` | fix: name closure types by definition path, not crate-wide index | VI-0019 | Introduces stable definition-path closure names instead of crate-wide `DefIndex`, so inserting an item no longer renames closures in other modules. The initial truncated identity is superseded by `cc7bbce4` below. Declarations keep stock's order; the SMT input equals stock's up to renaming and line wrapping. Included in the cc7 pin update. | `sail_vi0019_closure_ids` |
+| `3f7f6c51` | fix: order imported closure index ties deterministically | VI-0019 | Imported trait-default bodies can contain distinct closures with the same crate-local `DefIndex`. Break those declaration-order ties by the stable closure name, rather than hash-map iteration. The two-crate regression observes both exported closure types and checks their order over sixteen fresh processes. Included in the cc7 pin update. | `sail_vi0019_closure_ids` |
 | `b4450da9` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
+| `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Included in the qualified cc7 runtime. | `output_json` multi-note tests assert serialized order and original set membership |
+| `cc7bbce4` | fix: retain full definition-path identity for closures | VI-0019 | Equality, hashing and SMT names retain both stable crate ID and local definition hash; the declaration index only orders output. Fresh matching runtime, vstd and exports are required. | two VIR identity tests and the 16-run `sail_vi0019_closure_ids` two-crate regression |
 
-| `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Candidate; combined runtime qualification pending. | `output_json` multi-note tests assert serialized order and original set membership |
+### Qualified full closure identity
 
-### Prospective full closure identity
-
-The isolated full-identity candidate retains both 64-bit halves of rustc
+The qualified `cc7bbce4` source retains both 64-bit halves of rustc
 1.98.1's `DefPathHash`: the stable crate ID and the crate-local definition
 hash. Equality, hashing, internal datatype names and closure-impl names use
 the complete pair; the crate-local declaration index only controls ordering,
 with ties broken by the complete pair. The local hash is seeded by the stable
 crate ID, but that does not extend rustc's within-crate collision check to
-arbitrary local halves from different crates. This candidate preserves the
+arbitrary local halves from different crates. The complete pair preserves the
 compiler's intended crate-graph identity instead of relying on that truncation.
 No actual cross-crate hash collision or wrong verdict has been observed.
 The source API is rustc's pinned
@@ -120,13 +123,36 @@ using `stable_crate_id().as_u64()` and `local_hash().as_u64()` separately.
 The two added unit controls force equal local halves with different crate
 halves and check independent map keys, exact hash inputs and both name families.
 The existing source-identical two-crate trait-default regression now checks
-both identity halves in exported VIR and simplified datatype names. These
-controls and the candidate are not yet built or qualified. Existing `8a373f81`
-runtime, determinism and performance evidence describes that earlier source,
-not this identity change. No runtime asset, public branch or Sail pin changes.
-The extra identity field also changes exported VIR's serialized layout; no
-compatibility with previously exported VIR is claimed. Any qualification must
-build a matching runtime, vstd and dependency exports from the new source.
+both identity halves in exported VIR and simplified datatype names. Native
+qualification passes both unit controls, all 16 fresh two-crate clients, the
+complete fork suite (4,709 Same, 58 ignored; all 4,651 nonignored plain tests
+pass), all four FAST and STANDARD arms, and default DEEP (159 Same / 12,726
+functions per arm, zero Different/Unstable/infrastructure errors; two optional
+Singular projects skipped per arm). Three runs of every current FAST input
+(147 inputs, 441 executions) yield 577 query buckets with no varying buckets
+or problems under the unchanged determinism oracle. Earlier `8a373f81`
+evidence is not substituted for these cc7 runs.
+
+Matching native normal Linux and Apple-silicon runtimes, vstd and dependency
+exports were built from cc7. The extra identity field changes exported VIR's
+serialized layout; no compatibility with earlier exported VIR is claimed.
+The original normal runtime manifests and per-file hashes remain authoritative.
+
+Three rotated native Linux rounds with identical Sail code retain all 54
+samples: helper insertion falls from 34.682 s to 25.107 s (27.6%, 1.381x)
+against the previous `73dea021` runtime. Body edits rise from 25.130 s to
+25.437 s (1.2%); cold medians rise about 0.9%. Both recipe matrices pass all
+vstd and Vest per-function verdicts and diagnostic comparisons. Final comment
+samples deliberately force frontend work; they are not unchanged receipt
+reruns. This is a narrow helper-edit gain, not a full edit-catalogue or repair
+2x claim. Cross-runtime SMT identifier differences are retained, not normalized.
+
+Linux staged-bundle smoke passes. Mac build/install/stage/new/edit/repair and
+negative-proof components pass, but that delivery run's enclosing global-cache
+inventory guard remains FAIL: 57 added crate archives, writer unknown, with
+all original installed bytes unchanged. No quiet-cache retry is substituted.
+Sail's private `docs/validation/closure-full-identity.md` retains exact source,
+runtime and raw evidence hashes, including earlier failed setup attempts.
 
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
@@ -150,8 +176,16 @@ engine runtimes published here as GitHub prereleases. Earlier pinned commits
 |---|---|---|
 | `engine-runtime-13a1176c-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (until `73dea021`) |
 | `engine-runtime-13a1176c-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (until `73dea021`) |
-| `engine-runtime-73dea021-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` |
-| `engine-runtime-73dea021-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` |
+| `engine-runtime-73dea021-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (until `cc7bbce4`) |
+| `engine-runtime-73dea021-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (until `cc7bbce4`) |
+| `engine-runtime-cc7bbce4-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (cc7 pin update) |
+| `engine-runtime-cc7bbce4-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (cc7 pin update) |
+
+The cc7 normal archive digests are
+`717680b4cb126f48397b02f32dcbf54e0f2a320fa0c16c86a97237a8c3eee8b1`
+(Linux, 14 files including the original manifest) and
+`65523848b990f49221035a087e685fe9666e65d34cb5b9d1b76f25f690f86d9b`
+(macOS, 15 files including the original manifest).
 
 Each release has the archive `engine-runtime.tar.gz` and its checksum file
 `engine-runtime.tar.gz.sha256`. The archive holds `sail-build.json` (the build
@@ -190,8 +224,8 @@ It shows that the fork builds, that vstd verifies, and that the fork's fixes
 still pass their tests. It only compiles the engine: it does not exercise the
 engine's behaviour, which Sail's own engine qualification covers. It does not
 run upstream's full `rust_verify_test` suite; Sail's local qualification does
-(with the fixes now in `73dea021`, measured on their pre-rebase lane commit:
-4,649 passed, 0 failed, 58 ignored). This CI uses no
+(the qualified cc7 source: 4,709 Same, 58 ignored and all 4,651 nonignored
+plain tests passing). This CI uses no
 macOS runners; Sail's release tooling builds and qualifies the macOS runtime
 natively. Actions are pinned by commit SHA (the repository requires it) and
 the workflow token is read-only.
