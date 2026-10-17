@@ -96,10 +96,23 @@ fn sail_vi0023_recursive_parameter_copies_keep_positions() {
             pub open spec fn value(PARAM: nat) -> nat decreases PARAM {
                 if PARAM == 0 { 0 } else { 1 + value((PARAM - 1) as nat) }
             }
+            pub open spec fn via_value(PARAM: nat) -> nat
+                decreases PARAM via via_value_decreases
+            {
+                if PARAM == 0 { 0 } else { 1 + via_value((PARAM - 1) as nat) }
+            }
+            #[via_fn]
+            proof fn via_value_decreases(PARAM: nat) {
+                if PARAM > 0 {
+                    assert(((PARAM - 1) as nat) < PARAM);
+                }
+            }
         }"#,
         r#"proof fn check() {
             reveal_with_fuel(crate::defs::value, 2);
             assert(crate::defs::value(1) == 1);
+            reveal_with_fuel(crate::defs::via_value, 2);
+            assert(crate::defs::via_value(1) == 1);
         }"#,
     );
 }

@@ -1245,8 +1245,10 @@ fn simplify_function(
         let prev = param.x.name.clone();
         let name = if rename_ok {
             // Keep the original name/spans and existing capture-aware reference
-            // rewrite. Only spec formals get position-based AIR/SMT spellings.
-            let name = if functionx.mode == Mode::Spec {
+            // rewrite. A decreases_by/recommends_by proof is the spec function's
+            // body, spliced into its parameter scope during AST-to-SST lowering.
+            // Its corresponding formals must therefore use the same positions.
+            let name = if functionx.mode == Mode::Spec || functionx.attrs.is_decrease_by {
                 crate::def::spec_param_name(&prev, index)
             } else {
                 VarIdent(prev.0.clone(), crate::ast::VarIdentDisambiguate::VirParam)
