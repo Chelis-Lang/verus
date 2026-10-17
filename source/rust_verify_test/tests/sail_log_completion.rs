@@ -7,9 +7,11 @@ use common::*;
 // ordinary and bit-vector proofs exercise the shared and spinoff owners.
 const CODE: &str = verus_code_str! {
     mod specification_only {
+        use vstd::prelude::*;
         pub open spec fn identity(x: int) -> int { x }
     }
     mod checked {
+        use vstd::prelude::*;
         proof fn ordinary() { assert(true); }
         proof fn bits(x: u8) { assert(x & 0 == 0) by(bit_vector); }
     }
