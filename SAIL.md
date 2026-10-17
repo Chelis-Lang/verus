@@ -56,6 +56,34 @@ registry directory when Sail asks (`SAIL_RUSTC_DEV_SOURCE_BASE`), so
 diagnostics read exactly as stock's do for a vstd compiled on the user's
 machine. Without the variable the driver is unchanged.
 
+The disabled compiler-boundary experiment also supports a private compiler-read
+observation under ADR 0048. `SAIL_COMPILER_INPUTS` names a fresh private directory
+and `SAIL_COMPILER_INPUTS_BINDING` supplies a 64-digit request binding. The driver
+retains source-map checksums and original byte lengths separately for GHOST
+verification and EXEC compilation, then writes one `inputs.json` only after both
+phases succeed. Missing, duplicate or incomplete phases refuse observation.
+Extra tracked paths and tracked environment are recorded separately; reopened
+dep-info hashes are not presented as evidence of earlier reads. The consumer
+must still check the actual child, full proof result and complete input model.
+Absent the request, no observation is made. This experiment is not a selected
+Sail runtime or a qualified prebuilt-vstd release.
+
+The separate `SAIL_NATIVE_COMPILER_INPUTS` request, with
+`SAIL_NATIVE_COMPILER_INPUTS_BINDING`, observes Cargo's ordinary native Rust
+path. Its genuine `after_analysis` callback captures one compiler source map,
+extra tracked inputs and environment; a normal compiler return writes one
+`sail-native-compiler-read-inputs` document. It never manufactures GHOST/EXEC
+phases or establishes a proof. Missing, repeated or changed requests decline.
+Sail must still require actual successful child exit, admit every loaded native
+source against its exact official policy, and bind the actual consumed native
+dependency graph. In particular, source observation alone does not establish
+what mutable `--extern` or `-L` inputs the compiler loaded. This protocol is
+unselected. Four controls pass on a Mac pinned-compiler API witness (actual
+source B survives restoration of A in the record, unchanged A artifact bytes,
+failed compilation emits no record); the witness stubs source-base configuration.
+The full fork build, Linux consumer integration and complete input qualification
+remain open.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
@@ -104,6 +132,7 @@ the pinned commit; that is expected and does not affect the runtime source.
 | `b4450da9` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
 | `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Included in the qualified cc7 runtime. | `output_json` multi-note tests assert serialized order and original set membership |
 | `cc7bbce4` | fix: retain full definition-path identity for closures | VI-0019 | Equality, hashing and SMT names retain both stable crate ID and local definition hash; the declaration index only orders output. Fresh matching runtime, vstd and exports are required. | two VIR identity tests and the 16-run `sail_vi0019_closure_ids` two-crate regression |
+| `425ec23b`, `a82c0b82` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
 
 ### Qualified full closure identity
 
