@@ -3414,6 +3414,7 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
         self.spans = Some(spans);
         self.verifier.sail_focus(compiler, self.spans.as_ref().unwrap());
         self.finish_verus(compiler);
+        crate::sail_compiler_inputs::record(tcx, "verification");
 
         rustc_driver::Compilation::Stop
     }

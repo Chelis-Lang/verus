@@ -13,10 +13,20 @@ impl rustc_driver::Callbacks for DefaultCallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
         crate::sail_source_base::configure(config);
     }
+
+    fn after_analysis<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        tcx: TyCtxt<'tcx>,
+    ) -> rustc_driver::Compilation {
+        crate::sail_native_inputs::record(tcx);
+        rustc_driver::Compilation::Continue
+    }
 }
 
 pub fn run_rustc_compiler_directly(rustc_args: &Vec<String>) -> () {
-    rustc_driver::run_compiler(&rustc_args, &mut DefaultCallbacks)
+    rustc_driver::run_compiler(&rustc_args, &mut DefaultCallbacks);
+    crate::sail_native_inputs::finish();
 }
 
 fn run_compiler<'a, 'b>(
@@ -157,8 +167,9 @@ impl rustc_driver::Callbacks for CompilerCallbacksEraseMacro {
     fn after_analysis<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        _tcx: TyCtxt<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
+        crate::sail_compiler_inputs::record(tcx, "compilation");
         if self.do_compile {
             rustc_driver::Compilation::Continue
         } else {
@@ -378,6 +389,9 @@ pub fn run(
     }
 
     crate::verifier::sail_engine_sealed(
+        !verifier.encountered_vir_error && verifier.count_errors == 0,
+    );
+    crate::sail_compiler_inputs::finish(
         !verifier.encountered_vir_error && verifier.count_errors == 0,
     );
     (verifier, stats, Ok(()))
