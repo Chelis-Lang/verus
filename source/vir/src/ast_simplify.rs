@@ -1241,10 +1241,16 @@ fn simplify_function(
         param_ids.insert(x.clone());
     }
     let mut param_names: Vec<VarIdent> = Vec::new();
-    for param in functionx.params.iter() {
+    for (index, param) in functionx.params.iter().enumerate() {
         let prev = param.x.name.clone();
         let name = if rename_ok {
-            let name = VarIdent(prev.0.clone(), crate::ast::VarIdentDisambiguate::VirParam);
+            // Keep the original name/spans and existing capture-aware reference
+            // rewrite. Only spec formals get position-based AIR/SMT spellings.
+            let name = if functionx.mode == Mode::Spec {
+                crate::def::spec_param_name(&prev, index)
+            } else {
+                VarIdent(prev.0.clone(), crate::ast::VarIdentDisambiguate::VirParam)
+            };
             state.rename_vars.insert(prev, name.clone()).map(|_| panic!("rename params"));
             name
         } else {

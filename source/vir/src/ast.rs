@@ -85,6 +85,11 @@ pub enum VarIdentDisambiguate {
     ExpandErrorsDecl(u64),
     BitVectorToAirDecl(u64),
     ResInfTemp(u64),
+    // Sail VI-0023: keep the source spelling in VarIdent.0 for diagnostics,
+    // but lower spec formal parameters by their position in the signature.
+    // Append variants so existing serialized variant ordinals do not shift.
+    VirSpecParam(usize),
+    VirSpecParamRecursion { index: usize, depth: usize },
 }
 
 /// A local variable name, possibly renamed for disambiguation
