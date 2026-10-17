@@ -157,8 +157,9 @@ impl rustc_driver::Callbacks for CompilerCallbacksEraseMacro {
     fn after_analysis<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        _tcx: TyCtxt<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
+        crate::sail_compiler_inputs::record(tcx, "compilation");
         if self.do_compile {
             rustc_driver::Compilation::Continue
         } else {
