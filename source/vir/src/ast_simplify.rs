@@ -99,7 +99,7 @@ impl State {
             args: typs,
             output: typ,
             kind: kind,
-            path: crate::def::prefix_closure_type(id.name),
+            path: crate::def::prefix_closure_type(id),
         });
         assert!(&e.enclosing_fun == &fun);
         e.path.clone()
@@ -1553,7 +1553,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
     // Preserve stock's local declaration order (rustc's DefIndex). Imported
     // trait default bodies can contain closures from different crates with
     // the same local index; break those ties independently of HashMap order.
-    closures.sort_by_key(|kv| (kv.0.order, kv.0.name));
+    closures.sort_by_key(|kv| (kv.0.order, kv.0.stable_crate_id, kv.0.name));
     for (id, closure) in closures {
         // Right now, we translate the closure type into an a global datatype.
         //
@@ -1619,7 +1619,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
         ));
         let impl_path = Arc::new(crate::ast::PathX {
             krate: CrateId::Internal,
-            segments: Arc::new(vec![crate::def::impl_closure(closure.kind, id.name)]),
+            segments: Arc::new(vec![crate::def::impl_closure(closure.kind, id)]),
         });
         let trait_typ_args = Arc::new(vec![self_typ.clone(), args_tuple_typ.clone()]);
         let trait_implx = crate::ast::TraitImplX {

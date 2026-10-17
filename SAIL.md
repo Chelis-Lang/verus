@@ -102,6 +102,32 @@ commit; that is expected and does not affect the pin.
 
 | `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Candidate; combined runtime qualification pending. | `output_json` multi-note tests assert serialized order and original set membership |
 
+### Prospective full closure identity
+
+The isolated full-identity candidate retains both 64-bit halves of rustc
+1.98.1's `DefPathHash`: the stable crate ID and the crate-local definition
+hash. Equality, hashing, internal datatype names and closure-impl names use
+the complete pair; the crate-local declaration index only controls ordering,
+with ties broken by the complete pair. The local hash is seeded by the stable
+crate ID, but that does not extend rustc's within-crate collision check to
+arbitrary local halves from different crates. This candidate preserves the
+compiler's intended crate-graph identity instead of relying on that truncation.
+No actual cross-crate hash collision or wrong verdict has been observed.
+The source API is rustc's pinned
+[`DefPathHash`](https://github.com/rust-lang/rust/blob/1.98.1/compiler/rustc_span/src/def_id.rs),
+using `stable_crate_id().as_u64()` and `local_hash().as_u64()` separately.
+
+The two added unit controls force equal local halves with different crate
+halves and check independent map keys, exact hash inputs and both name families.
+The existing source-identical two-crate trait-default regression now checks
+both identity halves in exported VIR and simplified datatype names. These
+controls and the candidate are not yet built or qualified. Existing `8a373f81`
+runtime, determinism and performance evidence describes that earlier source,
+not this identity change. No runtime asset, public branch or Sail pin changes.
+The extra identity field also changes exported VIR's serialized layout; no
+compatibility with previously exported VIR is claimed. Any qualification must
+build a matching runtime, vstd and dependency exports from the new source.
+
 Dropped fixes (no longer on `sail`; the commits stay reachable from tag
 `pinned/4881cd0f`):
 

@@ -186,6 +186,9 @@ fn sail_vi0019_imported_closure_index_ties_have_stable_order() {
             .map(|id| {
                 let mut words = id.split_whitespace();
                 let name = words.next().expect("closure name").parse::<u64>().expect("number");
+                assert_eq!(words.next(), Some(":stable_crate_id"));
+                let stable_crate_id =
+                    words.next().expect("stable crate ID").parse::<u64>().expect("number");
                 assert_eq!(words.next(), Some(":order"));
                 let order = words
                     .next()
@@ -193,22 +196,33 @@ fn sail_vi0019_imported_closure_index_ties_have_stable_order() {
                     .trim_end_matches(')')
                     .parse::<usize>()
                     .expect("number");
-                (order, name)
+                (order, stable_crate_id, name)
             })
             .collect();
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), 2, "fixture must retain both foreign closures");
         assert_eq!(ids[0].0, ids[1].0, "fixture must exercise an index tie");
-        let actual: Vec<u64> = simple
+        assert_ne!(ids[0].1, ids[1].1, "the two source-identical crates need distinct identities");
+        let actual: Vec<(u64, u64)> = simple
             .lines()
             .filter_map(|line| {
                 let rest =
                     line.split("(Datatype :name (Dt Path crate::anonymous_closure%").nth(1)?;
-                Some(rest.split(')').next().expect("closure name").parse().expect("number"))
+                let name = rest.split(')').next().expect("closure name");
+                let (stable_crate_id, local_hash) = name.split_once('_').expect("full closure ID");
+                Some((
+                    stable_crate_id.parse().expect("crate ID number"),
+                    local_hash.parse().expect("local hash number"),
+                ))
             })
             .collect();
-        assert_eq!(actual, ids.iter().map(|(_, name)| *name).collect::<Vec<_>>());
+        assert_eq!(
+            actual,
+            ids.iter()
+                .map(|(_, stable_crate_id, name)| (*stable_crate_id, *name))
+                .collect::<Vec<_>>()
+        );
         if let Some(expected) = &first {
             assert_eq!(&actual, expected, "closure declaration order changed across runs");
         } else {
