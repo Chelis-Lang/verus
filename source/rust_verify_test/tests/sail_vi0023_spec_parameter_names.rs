@@ -7,7 +7,7 @@ use common::*;
 // definition axioms imported by an otherwise untouched caller module.
 // PARAM marks only the outer formal/references. A literal `sail_arg` below
 // can therefore shadow the original formal without being renamed itself.
-fn client_smt(definitions: &str, caller: &str, renamed: bool) -> String {
+fn client_smt(name: &str, definitions: &str, caller: &str, renamed: bool) -> String {
     assert!(definitions.contains("PARAM"));
     let definitions = definitions.replace("PARAM", if renamed { "sail_new" } else { "sail_arg" });
     let code = format!(
@@ -23,7 +23,7 @@ fn client_smt(definitions: &str, caller: &str, renamed: bool) -> String {
         "--sail-raw=--log-dir",
         log_dir.as_str(),
     ];
-    let result = verify_one_file("sail_vi0023_spec_parameter_names", code, &options);
+    let result = verify_one_file(name, code, &options);
     assert!(result.is_ok(), "verification failed: {:?}", result);
     let mut files: Vec<_> = std::fs::read_dir(logs.path())
         .expect("SMT log directory")
@@ -50,15 +50,19 @@ fn client_smt(definitions: &str, caller: &str, renamed: bool) -> String {
     result
 }
 
-fn unchanged_caller(definitions: &str, caller: &str) {
-    let before = client_smt(definitions, caller, false);
-    let after = client_smt(definitions, caller, true);
+fn unchanged_caller(name: &str, definitions: &str, caller: &str) {
+    // The shared harness names its scratch directory by binary and test name.
+    // Keep cases separate even when the conformance runner executes exact
+    // cases in separate processes against the same test binary.
+    let before = client_smt(name, definitions, caller, false);
+    let after = client_smt(name, definitions, caller, true);
     assert_eq!(before, after, "renaming a spec formal changed caller SMT");
 }
 
 #[test]
 fn sail_vi0023_spec_parameter_rename_keeps_caller_axioms() {
     unchanged_caller(
+        "sail_vi0023_spec_parameter_rename_keeps_caller_axioms",
         r#"mod defs {
             use vstd::prelude::*;
             pub open spec fn value(PARAM: int, unused: int, right: int) -> int {
@@ -74,6 +78,7 @@ fn sail_vi0023_spec_parameter_rename_keeps_caller_axioms() {
 #[test]
 fn sail_vi0023_shadowing_and_unused_positions_do_not_capture() {
     unchanged_caller(
+        "sail_vi0023_shadowing_and_unused_positions_do_not_capture",
         r#"mod defs {
             use vstd::prelude::*;
             pub open spec fn value(PARAM: int, unused: int, right: int) -> int {
@@ -91,6 +96,7 @@ fn sail_vi0023_shadowing_and_unused_positions_do_not_capture() {
 #[test]
 fn sail_vi0023_recursive_parameter_copies_keep_positions() {
     unchanged_caller(
+        "sail_vi0023_recursive_parameter_copies_keep_positions",
         r#"mod defs {
             use vstd::prelude::*;
             pub open spec fn value(PARAM: nat) -> nat decreases PARAM {
@@ -120,6 +126,7 @@ fn sail_vi0023_recursive_parameter_copies_keep_positions() {
 #[test]
 fn sail_vi0023_generic_trait_default_callers_keep_spec_arguments() {
     unchanged_caller(
+        "sail_vi0023_generic_trait_default_callers_keep_spec_arguments",
         r#"mod defs {
             use vstd::prelude::*;
             pub open spec fn value<T>(PARAM: T, unused: T) -> T { PARAM }
