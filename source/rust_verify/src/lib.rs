@@ -65,6 +65,7 @@ pub mod rust_to_vir_global;
 mod rust_to_vir_impl;
 pub mod rust_to_vir_trait;
 mod sail_compiler_inputs;
+mod sail_native_inputs;
 pub mod sail_source_base;
 #[cfg(feature = "singular")]
 pub mod singular;

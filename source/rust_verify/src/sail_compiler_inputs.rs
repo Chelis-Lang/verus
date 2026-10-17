@@ -66,6 +66,25 @@ pub(crate) fn record(tcx: TyCtxt<'_>, phase: &str) {
     let Some(request) = request() else {
         return;
     };
+    let document = phase_record(tcx);
+    let Ok(mut pending) = PENDING.lock() else {
+        return;
+    };
+    if let Some(pending) = pending.as_mut() {
+        if pending.request != request {
+            pending.failed = true;
+        }
+        pending.insert(phase, document);
+    } else {
+        let mut state = Pending { request, phases: BTreeMap::new(), failed: false };
+        state.insert(phase, document);
+        *pending = Some(state);
+    }
+}
+
+/// Compiler-owned inputs for one actual phase. The caller supplies its own
+/// request, multiplicity and successful-completion protocol.
+pub(crate) fn phase_record(tcx: TyCtxt<'_>) -> Option<Value> {
     let files = tcx.sess.source_map().files();
     let sources = source_records(files.iter().map(|file| &**file));
     let mut tracked: Vec<_> =
@@ -87,22 +106,8 @@ pub(crate) fn record(tcx: TyCtxt<'_>, phase: &str) {
             "tracked_environment": environment,
         })
     });
-    let document = document.filter(|value| {
-        serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 4 * 1024 * 1024)
-    });
-    let Ok(mut pending) = PENDING.lock() else {
-        return;
-    };
-    if let Some(pending) = pending.as_mut() {
-        if pending.request != request {
-            pending.failed = true;
-        }
-        pending.insert(phase, document);
-    } else {
-        let mut state = Pending { request, phases: BTreeMap::new(), failed: false };
-        state.insert(phase, document);
-        *pending = Some(state);
-    }
+    document
+        .filter(|value| serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 4 * 1024 * 1024))
 }
 
 /// Called once after successful verification and erased compilation. Only

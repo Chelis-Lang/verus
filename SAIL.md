@@ -67,6 +67,22 @@ must still check the actual child, full proof result and complete input model.
 Absent the request, no observation is made. This experiment is not a selected
 Sail runtime or a qualified prebuilt-vstd release.
 
+The separate `SAIL_NATIVE_COMPILER_INPUTS` request, with
+`SAIL_NATIVE_COMPILER_INPUTS_BINDING`, observes Cargo's ordinary native Rust
+path. Its genuine `after_analysis` callback captures one compiler source map,
+extra tracked inputs and environment; a normal compiler return writes one
+`sail-native-compiler-read-inputs` document. It never manufactures GHOST/EXEC
+phases or establishes a proof. Missing, repeated or changed requests decline.
+Sail must still require actual successful child exit, admit every loaded native
+source against its exact official policy, and bind the actual consumed native
+dependency graph. In particular, source observation alone does not establish
+what mutable `--extern` or `-L` inputs the compiler loaded. This protocol is
+unselected. Four controls pass on a Mac pinned-compiler API witness (actual
+source B survives restoration of A in the record, unchanged A artifact bytes,
+failed compilation emits no record); the witness stubs source-base configuration.
+The full fork build, Linux consumer integration and complete input qualification
+remain open.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
