@@ -10,8 +10,9 @@ use common::*;
 fn client_smt(definitions: &str, caller: &str, renamed: bool) -> String {
     assert!(definitions.contains("PARAM"));
     let definitions = definitions.replace("PARAM", if renamed { "sail_new" } else { "sail_arg" });
-    let code =
-        format!("::verus_builtin_macros::verus! {{ {definitions}\nmod client {{ {caller} }} }}");
+    let code = format!(
+        "::verus_builtin_macros::verus! {{ {definitions}\nmod client {{ use vstd::prelude::*; {caller} }} }}"
+    );
     let logs = tempfile::tempdir().expect("SMT log directory");
     let log_dir = format!("--sail-raw={}", logs.path().display());
     let options = [
@@ -59,6 +60,7 @@ fn unchanged_caller(definitions: &str, caller: &str) {
 fn sail_vi0023_spec_parameter_rename_keeps_caller_axioms() {
     unchanged_caller(
         r#"mod defs {
+            use vstd::prelude::*;
             pub open spec fn value(PARAM: int, unused: int, right: int) -> int {
                 PARAM - right
             }
@@ -73,6 +75,7 @@ fn sail_vi0023_spec_parameter_rename_keeps_caller_axioms() {
 fn sail_vi0023_shadowing_and_unused_positions_do_not_capture() {
     unchanged_caller(
         r#"mod defs {
+            use vstd::prelude::*;
             pub open spec fn value(PARAM: int, unused: int, right: int) -> int {
                 let saved = PARAM;
                 let sail_arg = right + 1;
@@ -89,6 +92,7 @@ fn sail_vi0023_shadowing_and_unused_positions_do_not_capture() {
 fn sail_vi0023_recursive_parameter_copies_keep_positions() {
     unchanged_caller(
         r#"mod defs {
+            use vstd::prelude::*;
             pub open spec fn value(PARAM: nat) -> nat decreases PARAM {
                 if PARAM == 0 { 0 } else { 1 + value((PARAM - 1) as nat) }
             }
@@ -103,6 +107,7 @@ fn sail_vi0023_recursive_parameter_copies_keep_positions() {
 fn sail_vi0023_generic_trait_default_callers_keep_spec_arguments() {
     unchanged_caller(
         r#"mod defs {
+            use vstd::prelude::*;
             pub open spec fn value<T>(PARAM: T, unused: T) -> T { PARAM }
             pub trait Pick {
                 fn copy<T>(value: T) -> (result: T)
@@ -125,11 +130,13 @@ fn sail_vi0023_parameter_rename_does_not_hide_counterexamples() {
         let code = format!(
             r#"::verus_builtin_macros::verus! {{
                 mod defs {{
+                    use vstd::prelude::*;
                     pub open spec fn value({parameter}: int, unused: int, right: int) -> int {{
                         {parameter} - right
                     }}
                 }}
                 mod client {{
+                    use vstd::prelude::*;
                     proof fn bad(x: int, y: int) {{
                         assert(crate::defs::value(x, 91, y) == x + y);
                     }}
