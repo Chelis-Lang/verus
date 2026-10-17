@@ -1065,27 +1065,31 @@ pub struct CtorUpdateTail {
 
 /// Identity of an anonymous closure type.
 ///
-/// Sail fork (VI-0019): `name` is the number in the closure's SMT names
-/// (`anonymous_closure%<name>`, `impl_closure&%<kind><name>`). It is the local
-/// half of rustc's `DefPathHash` for the closure, which depends only on the
-/// closure's own definition path (enclosing items and per-parent
-/// disambiguators), and which rustc guarantees is unique within the crate.
+/// Sail fork (VI-0019): `stable_crate_id` and `name` retain both halves of
+/// rustc's `DefPathHash`. The pair is used in the closure's SMT names
+/// (`anonymous_closure%<crate>_<name>`, `impl_closure&%<kind><crate>_<name>`).
+/// The local half depends on the closure's definition path (enclosing items
+/// and per-parent disambiguators). Rustc checks its uniqueness within the
+/// crate and checks the stable crate ID when loading a crate graph; the local
+/// half alone does not carry the whole-graph identity guarantee.
 /// Stock Verus uses rustc's crate-wide `DefIndex` instead, so inserting any
 /// item renumbered every later closure in the crate.
 ///
 /// `order` is that `DefIndex`. It is used only to order the closure
 /// declarations in stock's local order. Different imported crates can reuse
-/// that index, so ties are broken by `name`. Equality and hashing use `name`
-/// alone, so no other order depends on unrelated items.
+/// that index, so ties are broken by the complete pair. Equality and hashing
+/// use both identity halves and ignore `order`, so unrelated items cannot
+/// change a closure's identity.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct ClosureId {
     pub name: u64,
+    pub stable_crate_id: u64,
     pub order: usize,
 }
 
 impl PartialEq for ClosureId {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.stable_crate_id == other.stable_crate_id && self.name == other.name
     }
 }
 
@@ -1093,7 +1097,70 @@ impl Eq for ClosureId {}
 
 impl std::hash::Hash for ClosureId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.stable_crate_id.hash(state);
         self.name.hash(state);
+    }
+}
+
+#[cfg(test)]
+mod closure_identity_tests {
+    use super::{ClosureId, ClosureKind};
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Default)]
+    struct HashBytes(Vec<u8>);
+
+    impl Hasher for HashBytes {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    fn hash_bytes(id: ClosureId) -> Vec<u8> {
+        let mut state = HashBytes::default();
+        id.hash(&mut state);
+        state.0
+    }
+
+    #[test]
+    fn equal_local_halves_from_different_crates_are_distinct_keys() {
+        // Force the collision which a naturally generated two-crate fixture
+        // cannot reliably produce. Both the key and hash input must retain
+        // the crate half; the ordering index must not become identity.
+        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7 };
+        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7 };
+        let same_a = ClosureId { order: 99, ..a };
+        let mut types = HashMap::new();
+        types.insert(a, "crate A");
+        types.insert(b, "crate B");
+        assert_ne!(a, b);
+        assert_eq!(types.len(), 2);
+        assert_eq!(types[&same_a], "crate A");
+        assert_eq!(hash_bytes(a), [1u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
+        assert_eq!(hash_bytes(b), [2u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
+        assert_eq!(hash_bytes(a), hash_bytes(same_a));
+    }
+
+    #[test]
+    fn closure_and_impl_names_retain_both_halves_but_not_order() {
+        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7 };
+        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7 };
+        let same_a = ClosureId { order: 99, ..a };
+        let a_path = crate::def::prefix_closure_type(a);
+        let b_path = crate::def::prefix_closure_type(b);
+        assert_eq!(&*a_path.segments[0], "anonymous_closure%1_42");
+        assert_eq!(&*b_path.segments[0], "anonymous_closure%2_42");
+        assert_ne!(a_path, b_path);
+        assert_eq!(a_path, crate::def::prefix_closure_type(same_a));
+        for kind in [ClosureKind::Fn, ClosureKind::FnMut, ClosureKind::FnOnce] {
+            assert_ne!(crate::def::impl_closure(kind, a), crate::def::impl_closure(kind, b));
+            assert_eq!(crate::def::impl_closure(kind, a), crate::def::impl_closure(kind, same_a));
+        }
     }
 }
 
