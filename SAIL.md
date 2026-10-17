@@ -55,6 +55,18 @@ registry directory when Sail asks (`SAIL_RUSTC_DEV_SOURCE_BASE`), so
 diagnostics read exactly as stock's do for a vstd compiled on the user's
 machine. Without the variable the driver is unchanged.
 
+The disabled compiler-boundary experiment also supports a private compiler-read
+observation under ADR 0048. `SAIL_COMPILER_INPUTS` names a fresh private directory
+and `SAIL_COMPILER_INPUTS_BINDING` supplies a 64-digit request binding. The driver
+retains source-map checksums and original byte lengths separately for GHOST
+verification and EXEC compilation, then writes one `inputs.json` only after both
+phases succeed. Missing, duplicate or incomplete phases refuse observation.
+Extra tracked paths and tracked environment are recorded separately; reopened
+dep-info hashes are not presented as evidence of earlier reads. The consumer
+must still check the actual child, full proof result and complete input model.
+Absent the request, no observation is made. This experiment is not a selected
+Sail runtime or a qualified prebuilt-vstd release.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
@@ -99,6 +111,7 @@ commit; that is expected and does not affect the pin.
 | `8d03ab54` | fix: name closure types by definition path, not crate-wide index | VI-0019 | Closure types are named `anonymous_closure%<N>` and `impl_closure&%<kind><N>` with `N` the local half of the closure's `DefPathHash` instead of rustc's crate-wide `DefIndex`, so inserting an item no longer renames closures in other modules. Declarations keep stock's order; the SMT input equals stock's up to that renaming (and the printer's line wrapping). Not yet pinned in Sail. | `sail_vi0019_closure_ids` |
 | `3f7f6c51` | fix: order imported closure index ties deterministically | VI-0019 | Imported trait-default bodies can contain distinct closures with the same crate-local `DefIndex`. Break those declaration-order ties by the stable closure name, rather than hash-map iteration. The two-crate regression observes both exported closure types and checks their order over sixteen fresh processes. Not yet pinned in Sail. | `sail_vi0019_closure_ids` |
 | `b4450da9` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
+| `425ec23b`, `a82c0b82` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
 
 | `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Candidate; combined runtime qualification pending. | `output_json` multi-note tests assert serialized order and original set membership |
 
