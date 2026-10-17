@@ -179,7 +179,9 @@ mod tests {
 
     fn source(bytes: &str) -> SourceFile {
         SourceFile::new(
-            FileName::Real(RealFileName::LocalPath("/sail/compiler-input.rs".into())),
+            FileName::Real(RealFileName::from_virtual_path(std::path::Path::new(
+                "/sail/compiler-input.rs",
+            ))),
             bytes.to_owned(),
             SourceFileHashAlgorithm::Md5,
             Some(SourceFileHashAlgorithm::Blake3),
