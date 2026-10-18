@@ -111,6 +111,25 @@ errors remain recorded (an inferred identifier type and a borrowed visibility
 value); their fixes do not change production code or assertions. This is
 compile/unit correctness, not Linux, full-runtime or performance qualification.
 
+The separate resolved-type ordering correction closes a source-level output
+risk: hash-driven method reachability can visit `HasResolved` bodies in a
+different order, and `ResolvedTypeCollection::finish` previously returned
+first-discovery order to AIR emission. The candidate completes the same closure,
+then orders datatype entries by the current crate's declarations and builtin
+entries by an explicit exhaustive variant order. The existing builtin-before-
+datatype command grouping, members, set deduplication and source identities
+remain intact. No new map is added for ordering. Two new nonempty typed
+regressions cover opposite method discovery/AIR output and datatype field
+closure. With pinned Rust 1.98.1 on macOS arm64, all six controls pass.
+The exact old finalizer with the same tests fails both new ordering assertions
+while the original four controls pass. This demonstrates the internal typed
+ordering defect; no real-project query mismatch, Linux runtime qualification
+or performance gain is claimed.
+The existing `resolve_axioms` module is doc-hidden public so the sibling fork
+regression tests can call its actual collector and AIR sink, using the already
+public resolved types in `PruneInfo`. No dependency, Sail command or runtime
+protocol is added by this internal test access.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,

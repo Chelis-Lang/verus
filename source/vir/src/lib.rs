@@ -63,7 +63,11 @@ pub mod recursion;
 pub mod recursive_types;
 mod resolution_inference;
 mod resolution_types;
-mod resolve_axioms;
+// Internal lowering remains accessible to sibling fork regression tests, which
+// exercise the actual public PruneInfo types and production AIR sink. This is
+// not a Sail CLI, runtime protocol or supported external compiler API.
+#[doc(hidden)]
+pub mod resolve_axioms;
 pub mod safe_api;
 mod scc;
 pub mod sst;

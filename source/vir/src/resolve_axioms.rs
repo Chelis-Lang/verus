@@ -27,7 +27,7 @@ pub enum ResolvableType {
 
 pub struct ResolvedTypeCollection {
     module: Path,
-    datatype_map: HashMap<Dt, Datatype>,
+    datatype_map: HashMap<Dt, (usize, Datatype)>,
 
     worklist: Vec<ResolvableType>,
     set: HashSet<ResolvableType>,
@@ -35,9 +35,9 @@ pub struct ResolvedTypeCollection {
 
 impl ResolvedTypeCollection {
     pub fn new(module: &Path, krate: &Krate) -> Self {
-        let mut datatype_map = HashMap::<Dt, Datatype>::new();
-        for d in krate.datatypes.iter() {
-            datatype_map.insert(d.x.name.clone(), d.clone());
+        let mut datatype_map = HashMap::<Dt, (usize, Datatype)>::new();
+        for (index, d) in krate.datatypes.iter().enumerate() {
+            datatype_map.insert(d.x.name.clone(), (index, d.clone()));
         }
         ResolvedTypeCollection {
             module: module.clone(),
@@ -50,7 +50,7 @@ impl ResolvedTypeCollection {
     pub fn visit_type(&mut self, typ: &Typ) {
         match &**typ {
             TypX::Datatype(dt, args, _) => {
-                let datatype = &self.datatype_map[dt];
+                let (_, datatype) = &self.datatype_map[dt];
                 if crate::ast_util::is_transparent_to(&datatype.x.transparency, &self.module) {
                     self.append(ResolvableType::Datatype(dt.clone()));
                 }
@@ -118,7 +118,7 @@ impl ResolvedTypeCollection {
     }
 
     fn visit_datatype_fields(&mut self, dt: Dt) {
-        let datatype = self.datatype_map[&dt].clone();
+        let datatype = self.datatype_map[&dt].1.clone();
         for variant in datatype.x.variants.iter() {
             for field in variant.fields.iter() {
                 self.visit_type(&field.a.0);
@@ -135,6 +135,31 @@ impl ResolvedTypeCollection {
             }
             idx += 1;
         }
+        // Reachability may discover HasResolved in hash-set-dependent method
+        // order. Complete the same closure first, then emit builtins in fixed
+        // variant order and datatypes in this current crate's declaration order.
+        // resolve_axioms still places builtin nodes before datatype commands.
+        // No member is added/removed, and no source identity/span is rewritten.
+        let datatype_map = &s.datatype_map;
+        s.worklist.sort_by_key(|typ| match typ {
+            ResolvableType::MutRef => (0, 0),
+            ResolvableType::Decoration(dec) => (
+                1,
+                match dec {
+                    TypDecoration::Ref => 0,
+                    TypDecoration::Box => 1,
+                    TypDecoration::Rc => 2,
+                    TypDecoration::Arc => 3,
+                    TypDecoration::Ghost => 4,
+                    TypDecoration::Tracked => 5,
+                    TypDecoration::Never => 6,
+                    TypDecoration::ConstPtr => 7,
+                },
+            ),
+            ResolvableType::Slice => (2, 0),
+            ResolvableType::Array => (3, 0),
+            ResolvableType::Datatype(dt) => (4, datatype_map[dt].0),
+        });
         s.worklist
     }
 }
