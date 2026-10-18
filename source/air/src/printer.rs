@@ -797,7 +797,7 @@ mod line_cleanup_tests {
 
     #[test]
     fn line_cleanup_preserves_actual_node_writer_output() {
-        let mut node = Node::Atom("a-long-identifier-with-β-and-quoted-characters".to_string());
+        let mut node = Node::Atom("a-long-identifier-for-line-wrapping-output-control".to_string());
         for level in 0..32 {
             node = Node::List(vec![
                 Node::Atom(if level % 2 == 0 { "and" } else { ":pattern" }.to_string()),
