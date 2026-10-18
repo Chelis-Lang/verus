@@ -130,8 +130,9 @@ The delivery tests use ordinary temporary directories by default. Their three
 negative cases compare full stderr with an actual same-source, same-runtime
 `-V allow-inline-air` run, which disables aliases; this legacy control is not
 independent baseline qualification. Explicit caller-owned evidence roots retain
-the independent accepted-runtime full-byte comparison mode. The delivery-test
-adaptation still needs its own default-mode native execution.
+the independent accepted-runtime full-byte comparison mode. All eight standalone
+delivery tests now pass against the unchanged production candidate runtime; the test crate alone was rebuilt. The complete fork suite
+remains pending.
 
 Two earlier uncompiled source packets failed independent review and remain
 rejected. Inherent methods, accepted closures, unrecorded synthetic methods and

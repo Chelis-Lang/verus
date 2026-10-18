@@ -3,8 +3,8 @@
 Status: production source `0a4a06cb` is independently source-reviewed, built with
 matching native Linux runtime/vstd, and passes the focused controls plus a useful
 27-call matched edit screen. It remains unqualified for selection. This delivery
-branch changes regression fixtures and documentation only; its standalone test
-adaptation is not yet executed. Earlier source packets01/02 failed independent
+branch changes regression fixtures and documentation only; all eight standalone
+default-mode tests now pass against the unchanged production runtime. Earlier source packets01/02 failed independent
 correctness review and were never built. Proposed Sail ADR 0056 records this
 additional name-generation policy.
 
@@ -123,8 +123,21 @@ Normal fork-suite execution requires no fixture environment. Each case owns a
 three negative cases, a second actual compiler run uses identical source and
 `-V allow-inline-air`, disabling aliases for that invocation. Complete stderr
 must match byte for byte. This is a same-runtime legacy control, not independent
-accepted-runtime conformance. Its delivery adaptation is source-ready and still
-awaits default-mode native execution.
+accepted-runtime conformance. Its delivery adaptation passes all eight default-mode
+cases against the unchanged production runtime.
+
+The standalone delivery fixture source is
+`691c4ad3cd287be1ed18cd3e6a5bbe05af97ef69bc211e2ef9b654c10e41e8b8` at
+`d3f386117fd0ac035132009304335042989b7379`. Its test crate was compiled and all
+eight exact cases passed with all three fixture environment variables absent,
+using the existing `0a4a06cb` production runtime; Verus was not rebuilt. Final
+checks restored the original full source and validated the unchanged runtime
+bodies and immutable benchmark capture. Complete standalone capture SHA-256 is
+`2eb14075e8e0339a06a72b10540ed07668dbee33b1bafc406b1667e16a568d17`
+(75 members, 1,731,477 raw bytes); every member/type/mode/hash was verified.
+The same-runtime legacy controls do not replace the separate accepted-runtime
+8+8 qualification. External import/capture wrapper refusals are retained in the
+raw evidence and did not change product checks.
 
 The separate independent baseline mode is retained: provide
 `SAIL_VI0030_FIXTURE_ROOT` and `SAIL_VI0030_BASELINE_DIAGNOSTICS`, run the same
@@ -169,6 +182,9 @@ in `vest_lib/src/asn1/mod.rs`; timing and per-call checks remain unchanged.
 | Cold wall median, seconds | 89.992 | 89.595 |
 | A-return-plus-comment wall median, seconds | 31.105 | 30.959 |
 
+The SMT figure sums elapsed SMT durations across verification threads; it is
+neither measured CPU time nor command wall time.
+
 The edited median saving is 24.693%; every candidate edited sample is below
 every accepted edited sample. The original at-least-5% plus full-separation
 criterion passes. A-return restores A and adds a comment; it is not unchanged B.
@@ -187,9 +203,8 @@ also have identical 266-entry A-return hash multisets across all three rounds
 in both arms. This passive observation does not replace controlled raw
 StableCrateId/physical-root qualification or full named-stream attribution.
 
-Remaining gates are: the standalone delivery tests; the complete fork source
-suite; a fresh alias-specific six-call/four-comparison complete per-function
-verdict and diagnostic matrix; full named SMT/body census and residual-stream
+Remaining gates are: the complete fork source suite; a fresh alias-specific
+six-call/four-comparison complete per-function verdict and diagnostic matrix; full named SMT/body census and residual-stream
 classification; controlled raw crate-ID/root variation; determinism; and full
 corpus qualification. The old SCC matrix's cross-runtime byte-equality assertion
 is inapplicable to intentional aliases and has not been silently weakened or
