@@ -130,6 +130,27 @@ regression tests can call its actual collector and AIR sink, using the already
 public resolved types in `PruneInfo`. No dependency, Sail command or runtime
 protocol is added by this internal test access.
 
+## Unselected oversized observation filename correction
+
+VI-0029 reproduces an existing logging failure with `-V spinoff-all`: a long
+function's per-query log component repeats its bucket and full function path.
+The actual 311-byte `.air` component exceeds a 255-byte filesystem name limit;
+file creation fails, and the pending-diagnostics destructor masks the I/O error
+with a panic. Existing e536 macOS runs pass with normal logging, spinoff without
+logging, and a short spinoff name; the long spinoff name with logging fails.
+The old enclosing native Anvil cohort remains failed.
+
+The candidate preserves an entire short filename family when its longest kind
+suffix fits within 255 UTF-8 bytes. Otherwise every member uses the same
+readable UTF-8 prefix and SHA-256 of its complete function/rerun/counter stem,
+followed by its unchanged kind suffix. This preserves AIR/transcript pairing
+even when only the longer transcript would cross the limit; compound suffixes
+such as `-final.air` remain intact. Known VIR and call-graph families use the
+same rule. No dependency, AST or source identity changes. Five focused helper
+regressions are present but unrun; the corrected runtime and actual long-name
+reproduction remain unqualified. The earlier full-component digest prototype
+was rejected before compilation because it broke paired log stems.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
