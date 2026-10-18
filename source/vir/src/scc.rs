@@ -214,23 +214,34 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         self.node_has_direct_edge_to_itself(t) || self.get_scc_size(t) > 1
     }
 
-    pub fn get_scc_rep(&self, t: &T) -> T {
+    fn checked_scc_id(&self, t: &T) -> SccId {
         assert!(self.has_run);
-        assert!(self.mapping.contains_key(&t));
-        let id = self.mapping.get(&t).expect("key was present in the line above");
-        self.nodes[self.sccs[*id].rep()].t.clone()
+        // Preserve the original missing-key assertion payload and eager failure
+        // ordering, while hashing an existing key only once.
+        *self.mapping.get(&t).expect("assertion failed: self.mapping.contains_key(&t)")
+    }
+
+    pub fn get_scc_rep(&self, t: &T) -> T {
+        let id = self.checked_scc_id(t);
+        self.nodes[self.sccs[id].rep()].t.clone()
     }
 
     pub fn in_same_scc(&self, t1: &T, t2: &T) -> bool {
         t1 == t2 || self.get_scc_rep(t1) == self.get_scc_rep(t2)
     }
 
+    /// Borrows members in the same order as `get_scc_nodes`, checking the
+    /// computed graph and requested key before returning the iterator.
+    pub fn get_scc_nodes_iter<'a>(
+        &'a self,
+        t: &T,
+    ) -> impl Iterator<Item = &'a T> + 'a + use<'a, T> {
+        let id = self.checked_scc_id(t);
+        self.sccs[id].nodes.iter().map(move |i| &self.nodes[*i].t)
+    }
+
     pub fn get_scc_nodes(&self, t: &T) -> Vec<T> {
-        assert!(self.has_run);
-        assert!(self.mapping.contains_key(&t));
-        let id = self.mapping[t];
-        let scc = &self.sccs[id];
-        scc.nodes.iter().map(|i| self.nodes[*i].t.clone()).collect()
+        self.get_scc_nodes_iter(t).cloned().collect()
     }
 
     pub fn shortest_cycle_back_to_self(&self, t: &T) -> Vec<T> {
@@ -372,3 +383,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone + std::fmt::Debug> std::fmt::Debu
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "scc_member_tests.rs"]
+mod member_tests;

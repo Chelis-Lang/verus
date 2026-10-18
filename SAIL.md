@@ -93,6 +93,40 @@ failed compilation emits no record); the witness stubs source-base configuration
 The full fork build, Linux consumer integration and complete input qualification
 remain open.
 
+## Unselected SCC member-access prototype
+
+The separate `perf/scc-borrowed-members` branch starts at accepted fork
+`e5365c05d0a9f8c8cb655edc035ce9a2f6dde482`. It shares one checked map lookup
+between `get_scc_rep` and SCC member access, replacing each accessor's previous
+`contains_key` followed by lookup. The owned `get_scc_nodes` API still returns
+the same ordered snapshot and clones every member. A borrowed iterator avoids
+that vector and those clones only in the immutable
+`recursive_types::check_traits` loop. Other callers retain owned snapshots.
+Graph construction, insertion, traversal, representatives and member order are
+unchanged; pre-computation and missing-key checks remain eager with their
+original failure payloads. This does not include the separate numeric-index
+prototype.
+
+Three focused VIR controls passed on native macOS on 2026-10-18: an
+original-accessor oracle over 6,144 graphs (512 directed three-node graphs,
+six declaration orders and two edge insertion directions, with parallel
+edges), actual key-hash and node-clone counters with borrowed storage identity,
+and eager-error plus first-error iteration-order comparisons. The counters
+confirm one key hash instead of two; owned member access retains all clones,
+while borrowed access clones none. The exact three controls ran in 0.05 seconds
+using a fresh test artifact built from this worktree with Rust 1.98.1, two build
+jobs, offline dependencies, debug information disabled and no incremental
+compilation. The raw result has SHA-256
+`7ba2f276015c0dd4448cf95141a14248117860378e710feef27ff94894ce5517`.
+
+The accepted-runtime Vest profile reported 2.94% aggregate self samples in
+`get_scc_nodes` and its vector/iterator specializations. That leaf total does
+not establish the share attributable to this caller, an inclusive CPU cost or
+a wall-time gain. Only the focused Mac VIR controls have been qualified; the
+runtime is unbuilt and unselected. Attributable native measurement, exact SMT
+bytes, complete verdict and diagnostic comparisons, and normal fork
+qualification remain pending.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
