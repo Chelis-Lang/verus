@@ -666,22 +666,153 @@ pub(crate) fn node_to_string(node: &Node) -> String {
 
 pub fn clean_up_lines(input: String, indentation: &str) -> String {
     let lines: Vec<&str> = input.lines().collect();
-    let mut result: String = "".to_string();
+    let mut result = String::with_capacity(input.len());
     let mut i = 0;
     while i < lines.len() {
-        let mut line = lines[i].to_owned();
-        // Consolidate closing ) lines:
-        if line.trim() == ")" {
+        let start = i;
+        if lines[i].trim() == ")" {
             while i + 1 < lines.len() && lines[i + 1].trim() == ")" {
-                line = lines[i + 1].to_string() + &indentation[1..] + line.trim();
                 i += 1;
             }
         }
-        result.push_str(&line);
+        // The last closing line keeps its original whitespace. Earlier lines
+        // occur in reverse order: intermediate lines lose only leading space,
+        // while the first line is fully trimmed by the original consolidation.
+        // Append each borrowed part once instead of repeatedly copying the
+        // growing suffix (and do not allocate a String for ordinary lines).
+        result.push_str(lines[i]);
+        if i > start {
+            let suffix = &indentation[1..];
+            for j in (start + 1..i).rev() {
+                result.push_str(suffix);
+                result.push_str(lines[j].trim_start());
+            }
+            result.push_str(suffix);
+            result.push_str(lines[start].trim());
+        }
         i += 1;
         if i < lines.len() {
             result.push_str("\n");
         }
     }
     result
+}
+
+#[cfg(test)]
+mod line_cleanup_tests {
+    use super::{Node, NodeWriter, clean_up_lines};
+
+    // Exact pre-change implementation, kept as an independent byte oracle.
+    fn original(input: String, indentation: &str) -> String {
+        let lines: Vec<&str> = input.lines().collect();
+        let mut result = String::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let mut line = lines[i].to_owned();
+            if line.trim() == ")" {
+                while i + 1 < lines.len() && lines[i + 1].trim() == ")" {
+                    line = lines[i + 1].to_string() + &indentation[1..] + line.trim();
+                    i += 1;
+                }
+            }
+            result.push_str(&line);
+            i += 1;
+            if i < lines.len() {
+                result.push_str("\n");
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn line_cleanup_preserves_whitespace_and_line_endings() {
+        let inputs = [
+            "",
+            "\n",
+            "\r\n",
+            "one",
+            "one\n",
+            "one\r\ntwo\r\n",
+            ")",
+            ")\n)",
+            " (foo\n    ) \t\n  )\t\n) \nnext",
+            "\u{2003})\u{a0}\n\t) \t\n)",
+            "not )\n) suffix\n)\n\n)",
+        ];
+        for input in inputs {
+            for indentation in ["", " ", "  ", "\t", "x", "x::", "aΩ"] {
+                // An empty indentation panics on a multi-line closing run in
+                // the legacy implementation; retain that same precondition.
+                if indentation.is_empty()
+                    && input
+                        .lines()
+                        .collect::<Vec<_>>()
+                        .windows(2)
+                        .any(|w| w[0].trim() == ")" && w[1].trim() == ")")
+                {
+                    continue;
+                }
+                assert_eq!(
+                    clean_up_lines(input.to_string(), indentation),
+                    original(input.to_string(), indentation)
+                );
+            }
+        }
+        assert_eq!(clean_up_lines("  ) \t\n)\n".to_string(), " "), "))");
+    }
+
+    #[test]
+    fn line_cleanup_matches_original_generated_sequences() {
+        let parts = ["", "token", ")", "  )", ") \t", "\t)\u{a0}", "(alpha β)"];
+        for length in 0..=5 {
+            for mut code in 0..parts.len().pow(length) {
+                let mut input = String::new();
+                for position in 0..length {
+                    if position != 0 {
+                        input.push('\n');
+                    }
+                    input.push_str(parts[code % parts.len()]);
+                    code /= parts.len();
+                }
+                for indentation in [" ", "  ", "x::", "aΩ"] {
+                    assert_eq!(
+                        clean_up_lines(input.clone(), indentation),
+                        original(input.clone(), indentation)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn line_cleanup_preserves_long_closing_runs() {
+        let input = "  ) \t\n".repeat(4096);
+        for indentation in [" ", "x::"] {
+            assert_eq!(
+                clean_up_lines(input.clone(), indentation),
+                original(input.clone(), indentation)
+            );
+        }
+    }
+
+    #[test]
+    fn line_cleanup_preserves_actual_node_writer_output() {
+        let mut node = Node::Atom("a-long-identifier-with-β-and-quoted-characters".to_string());
+        for level in 0..32 {
+            node = Node::List(vec![
+                Node::Atom(if level % 2 == 0 { "and" } else { ":pattern" }.to_string()),
+                node,
+            ]);
+        }
+        for indent in ["", " ", "    "] {
+            let indent = indent.to_string();
+            let line_break = "\n".to_string() + &indent;
+            let style = sise::SerializerStyle { line_break: &line_break, indentation: " " };
+            let mut raw = String::new();
+            let mut serializer = sise::Serializer::new(style, &mut raw);
+            NodeWriter::new().write_node(&mut serializer, &node, 80, false);
+            serializer.finish(false);
+            assert_eq!(NodeWriter::new().node_to_string_indent(&indent, &node), original(raw, " "));
+        }
+    }
 }

@@ -274,6 +274,31 @@ Upstream's workflows under `.github/workflows/` are kept unchanged so rebases
 stay clean, but each is disabled in this repository, so none of them
 (including the scheduled and release-publishing ones) runs here.
 
+## Unselected AIR line formatting candidate
+
+The AIR formatter now appends borrowed line slices directly to its result.
+Ordinary lines no longer allocate temporary strings, and consecutive closing
+parentheses no longer repeatedly copy a growing suffix. The legacy whitespace,
+line-ending and indentation behavior is retained; this changes no AST, command
+order, solver input, diagnostic label, pruning decision or persistent key.
+
+This is an implemented, uncompiled performance candidate, not a selected runtime.
+Historical native Vest profiles attribute 9.8 CPU seconds to AIR commands in
+aggregate; they do not isolate this formatter or establish a wall-time gain.
+Eight retained baseline transcript files contain 11,438,464 bytes and 269,941
+lines, with consolidated closing runs reaching 65. This establishes that real
+output exercises the allocation path, not how much time the patch saves.
+The external `retained-output-census.json` preserves every selected file name,
+size and SHA-256.
+
+Four pending controls compare exact bytes against the pre-change implementation:
+whitespace and line endings, generated line sequences, a long closing run, and
+the actual NodeWriter/serializer path. Native Linux runtime build, full literal
+SMT/verdict/diagnostic comparisons and a useful matched application gain remain
+required. The existing accepted e536/689 runtime stays selected. The separate
+traversal-event memo candidate's completed native screen did not meet its gain
+criterion and is not part of this patch.
+
 ## Build and test locally
 
 On Linux or macOS, with `rustup` installed, from the repository root:
