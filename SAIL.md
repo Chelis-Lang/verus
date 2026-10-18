@@ -93,6 +93,31 @@ failed compilation emits no record); the witness stubs source-base configuration
 The full fork build, Linux consumer integration and complete input qualification
 remain open.
 
+## Concrete trait-function SMT spelling prototype
+
+A separate accepted-`e5365c05` branch implements the uncompiled
+[VI-0030 function-spelling source prototype](SAIL_SMT_FUNCTION_ALIAS_DESIGN.md)
+under proposed Sail ADR 0056. The accepted-runtime Vest witness establishes an
+empty-impl insertion changing 23 full method paths and 30 literal SMT sessions,
+including untouched CBOR inputs that name an ASN.1 Clone contract.
+
+This prototype leaves all original Rust/VIR paths, closure IDs, equality/hash,
+sorting, diagnostics, lookups and import/export bytes unchanged. A read-only map
+from the complete merged pre-prune VIR selects injective full-key spellings for
+supported exact concrete trait functions at AIR rendering only. All duplicate
+labels remain legacy; raw inline AIR disables aliases for the whole invocation.
+No coherence uniqueness or native/producer inventory parity is assumed.
+
+Two earlier uncompiled source packets failed independent review of those
+assumptions and remain rejected. The current source controls are also uncompiled
+and unrun. The supported Clone subset still needs actual classification;
+inherent methods, accepted closures, unrecorded synthetic methods and impl qids
+remain edit-sensitive. Full hex names and map work may erase a gain. No new
+dependency, SCC change, filename helper, wire change or runtime pin is included.
+Independent source review, matching runtime/vstd build, complete correctness
+and determinism, and matched full-scope actual edit-loop evidence precede any
+selection. This source establishes no gain or runtime qualification.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
