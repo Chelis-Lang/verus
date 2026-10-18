@@ -50,6 +50,9 @@ use vir::prelude::PreludeConfig;
 #[path = "sail_engine.rs"]
 mod sail_engine;
 
+#[path = "sail_log_file_name.rs"]
+mod sail_log_file_name;
+
 const RLIMIT_PER_SECOND_Z3: f32 = 3000000f32;
 const RLIMIT_PER_SECOND_CVC5: f32 = 333333f32; // ~= 5s
 
@@ -692,7 +695,8 @@ impl Verifier {
             None => "crate".to_string(),
             Some(bucket_id) => bucket_id.to_log_string(),
         };
-        std::path::PathBuf::from(&dir_path).join(format!("{prefix}{suffix}"))
+        std::path::PathBuf::from(&dir_path)
+            .join(sail_log_file_name::bounded(format!("{prefix}{suffix}")))
     }
 
     /// Use when we expect our call to Z3 to always succeed
