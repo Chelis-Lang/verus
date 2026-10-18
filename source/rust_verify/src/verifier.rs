@@ -309,6 +309,10 @@ pub struct Verifier {
     pub func_fails: HashSet<Fun>,
     pub args: Args,
     pub user_filter: Option<UserFilter>,
+    /// The complete merged VIR from before crate pruning and external-trait
+    /// demotion (upstream kept it in `erasure_hints` until #3095). Sail's
+    /// SMT function aliases classify collision peers from it.
+    pub(crate) sail_unpruned_crate: Option<Krate>,
     pub(crate) verus_items: Option<Arc<VerusItems>>,
 
     /// total real time to verify all activated buckets of the crate, including real time for
@@ -526,6 +530,7 @@ impl Verifier {
             func_fails: HashSet::new(),
             args,
             user_filter: None,
+            sail_unpruned_crate: None,
             verus_items: None,
             time_verify_crate: Duration::new(0, 0),
             time_verify_crate_sequential: Duration::new(0, 0),
@@ -574,6 +579,7 @@ impl Verifier {
             func_fails: HashSet::new(),
             args: self.args.clone(),
             user_filter: self.user_filter.clone(),
+            sail_unpruned_crate: self.sail_unpruned_crate.clone(),
             verus_items: self.verus_items.clone(),
 
             time_verify_crate: Duration::new(0, 0),
@@ -2118,6 +2124,19 @@ impl Verifier {
             None
         };
 
+        // `sail_unpruned_crate` retains the complete merged VIR from before
+        // crate pruning and external-trait demotion. Never classify collision
+        // peers from this verifier's already-pruned crate or from a single bucket.
+        let smt_aliases = self.sail_unpruned_crate.as_ref().map_or_else(
+            || Arc::new(vir::sail_smt_names::SmtAliases::default()),
+            |unpruned| {
+                Arc::new(vir::sail_smt_names::SmtAliases::from_merged_crate(
+                    unpruned,
+                    self.args.allow_inline_air,
+                ))
+            },
+        );
+
         let mut global_ctx = vir::context::GlobalCtx::new(
             &krate,
             self.crate_id.clone().expect("crate_id"),
@@ -2132,6 +2151,7 @@ impl Verifier {
             self.args.axiom_usage_info,
             self.args.no_bv_simplify,
             self.args.report_long_running,
+            smt_aliases,
         )?;
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
@@ -2971,6 +2991,7 @@ impl Verifier {
 
         self.vir_crate = Some(vir_crate.clone());
         self.warning_ctx = Some(Arc::new(warning_ctx));
+        self.sail_unpruned_crate = Some(unpruned_crate.clone());
 
         if !self.args.no_lifetime {
             crate::erase::setup_verus_ctxt_for_thir_erasure(
