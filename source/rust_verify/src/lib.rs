@@ -52,6 +52,8 @@ mod hir_hide_reveal_rewrite;
 mod import_export;
 mod pre_header;
 pub mod profiler;
+#[cfg(test)]
+mod prune_index_tests;
 mod resolve_traits;
 pub mod reveal_hide;
 mod rust_intrinsics_to_vir;

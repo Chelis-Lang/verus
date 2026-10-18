@@ -93,6 +93,24 @@ failed compilation emits no record); the witness stubs source-base configuration
 The full fork build, Linux consumer integration and complete input qualification
 remain open.
 
+## Unselected invocation-local pruning index prototype
+
+The private prototype shares only five immutable trait/associated-type indexes
+between buckets consuming one exact simplified VIR crate allocation. Every
+bucket retains fresh module visibility, reachability state, lowering, query
+generation and proof checks. A different crate owner constructs fresh indexes;
+no spans or identities are removed and no state survives the invocation.
+Ordered index values retain duplicates. An empty bucket queue does no index
+construction. The prior read-only AST walk experiment did not remove these
+indexes and does not measure this change. Native index-only cost and net wall
+gain are unmeasured; no runtime or default is selected by this source prototype.
+Four targeted `rust_verify` library controls pass on macOS arm64 with pinned
+Rust 1.98.1: complete output/ordered duplicates, changed-owner reachability,
+duplicate-impl behavior and zero-bucket work. Two initial fixture compile
+errors remain recorded (an inferred identifier type and a borrowed visibility
+value); their fixes do not change production code or assertions. This is
+compile/unit correctness, not Linux, full-runtime or performance qualification.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,

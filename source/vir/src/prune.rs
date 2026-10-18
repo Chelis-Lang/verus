@@ -63,19 +63,119 @@ struct ReachBroadcastFunction {
     reach_triggers: Vec<(Vec<Fun>, Vec<ReachedType>)>,
 }
 
+/// Immutable trait indexes for buckets of one exact simplified crate.
+///
+/// The owner is retained to prevent address reuse. No index survives the
+/// verifier invocation, and a different crate allocation takes the fresh path.
+pub struct ModulePruneIndexes {
+    owner: Krate,
+    indexes: Arc<PruneIndexes>,
+}
+
+impl ModulePruneIndexes {
+    /// Build only for a nonempty bucket queue; zero buckets do no new work.
+    pub fn for_buckets(krate: &Krate, has_buckets: bool) -> Option<Arc<Self>> {
+        has_buckets.then(|| {
+            Arc::new(Self { owner: krate.clone(), indexes: Arc::new(PruneIndexes::new(krate)) })
+        })
+    }
+}
+
+struct PruneIndexes {
+    trait_map: HashMap<Path, Trait>,
+    trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>>,
+    typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>>,
+    trait_impl_map: HashMap<ImplName, ReachTraitImpl>,
+    assoc_type_impl_map: HashMap<AssocTypeGroup, Vec<AssocTypeImpl>>,
+    duplicate_trait_impls: bool,
+}
+
+impl PruneIndexes {
+    fn new(krate: &Krate) -> Self {
+        let mut trait_map: HashMap<Path, Trait> = HashMap::new();
+        let mut trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>> = HashMap::new();
+        let mut typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>> = HashMap::new();
+        let mut trait_impl_map: HashMap<ImplName, ReachTraitImpl> = HashMap::new();
+        let mut assoc_type_impl_map: HashMap<AssocTypeGroup, Vec<AssocTypeImpl>> = HashMap::new();
+        let mut duplicate_trait_impls = false;
+        for tr in krate.traits.iter() {
+            trait_map.insert(tr.x.name.clone(), tr.clone());
+        }
+
+        for imp in krate.trait_impls.iter() {
+            let mut bound_traits: Vec<TraitName> = Vec::new();
+            let mut bound_types: Vec<ReachedType> = Vec::new();
+            for bound in imp.x.typ_bounds.iter() {
+                match &**bound {
+                    crate::ast::GenericBoundX::Trait(tid, typ_args) => {
+                        match tid {
+                            TraitId::Path(path) => {
+                                bound_traits.push(path.clone());
+                            }
+                            TraitId::Sizedness(_) => {}
+                        }
+                        for t in typ_args.iter() {
+                            bound_types.push(typ_to_reached_type(t));
+                        }
+                    }
+                    crate::ast::GenericBoundX::TypEquality(path, typ_args, _name, typ) => {
+                        bound_traits.push(path.clone());
+                        for t in typ_args.iter() {
+                            bound_types.push(typ_to_reached_type(t));
+                        }
+                        bound_types.push(typ_to_reached_type(typ));
+                    }
+                    crate::ast::GenericBoundX::ConstTyp(t, s) => {
+                        bound_types.push(typ_to_reached_type(t));
+                        bound_types.push(typ_to_reached_type(s));
+                    }
+                }
+            }
+            let trait_impl = ReachTraitImpl {
+                trait_impl: imp.clone(),
+                bound_traits,
+                bound_types,
+                trait_typ_args: imp.x.trait_typ_args.iter().map(typ_to_reached_type).collect(),
+            };
+            if !trait_to_trait_impls.contains_key(&imp.x.trait_path) {
+                trait_to_trait_impls.insert(imp.x.trait_path.clone(), Vec::new());
+            }
+            trait_to_trait_impls.get_mut(&imp.x.trait_path).unwrap().push(imp.x.impl_path.clone());
+            for t in &trait_impl.trait_typ_args {
+                if !typ_to_trait_impls.contains_key(t) {
+                    typ_to_trait_impls.insert(t.clone(), Vec::new());
+                }
+                typ_to_trait_impls.get_mut(&t).unwrap().push(imp.x.impl_path.clone());
+            }
+            duplicate_trait_impls |= trait_impl_map.contains_key(&imp.x.impl_path);
+            trait_impl_map.insert(imp.x.impl_path.clone(), trait_impl);
+        }
+
+        for a in &krate.assoc_type_impls {
+            let key = a.x.prune_name();
+            if !assoc_type_impl_map.contains_key(&key) {
+                assoc_type_impl_map.insert(key.clone(), Vec::new());
+            }
+            assoc_type_impl_map.get_mut(&key).unwrap().push(a.clone());
+        }
+        Self {
+            trait_map,
+            trait_to_trait_impls,
+            typ_to_trait_impls,
+            trait_impl_map,
+            assoc_type_impl_map,
+            duplicate_trait_impls,
+        }
+    }
+}
+
 struct Ctxt {
     module: Option<Path>,
     function_map: HashMap<Fun, Function>,
     reveal_group_map: HashMap<Fun, RevealGroup>,
     datatype_map: HashMap<Dt, Datatype>,
     opaque_ty_map: HashMap<OpaqueTyName, OpaqueType>,
-    trait_map: HashMap<Path, Trait>,
-    // For an impl "bounds ==> trait T(...t...)", point T to impl:
-    trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>>,
-    // For an impl "bounds ==> trait T(...t...)", point t to impl:
-    typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>>,
-    trait_impl_map: HashMap<ImplName, ReachTraitImpl>,
-    assoc_type_impl_map: HashMap<AssocTypeGroup, Vec<AssocTypeImpl>>,
+    indexes: Arc<PruneIndexes>,
     // Map (D, T.f) -> D.f if D implements T.f:
     method_map: HashMap<(ReachedType, Fun), Vec<Fun>>,
     // For a broadcast function f with triggers containing functions f0..fn, point f0..fn to f:
@@ -241,7 +341,7 @@ fn reach_opaque_type(_ctxt: &Ctxt, state: &mut State, name: &OpaqueTyName) {
 }
 
 fn reach_trait_impl(ctxt: &Ctxt, state: &mut State, imp: &ImplName) {
-    if let Some(trait_impl) = ctxt.trait_impl_map.get(imp) {
+    if let Some(trait_impl) = ctxt.indexes.trait_impl_map.get(imp) {
         // We only reach the impl "bounds ==> trait T(...t...)" when all of T and t have been reached.
         // Otherwise, we consider the impl irrelevant.
         for t in &trait_impl.trait_typ_args {
@@ -260,7 +360,7 @@ fn reach_assoc_type_decl(_ctxt: &Ctxt, state: &mut State, name: &(Path, Ident)) 
 }
 
 fn reach_assoc_type_impl(ctxt: &Ctxt, state: &mut State, name: &AssocTypeGroup) {
-    if ctxt.assoc_type_impl_map.contains_key(name) {
+    if ctxt.indexes.assoc_type_impl_map.contains_key(name) {
         reach(&mut state.reached_assoc_type_impls, &mut state.worklist_assoc_type_impls, name);
     }
 }
@@ -651,7 +751,7 @@ fn traverse_reachable(ctxt: &Ctxt, state: &mut State) {
                 }
                 _ => {}
             }
-            if let Some(imps) = ctxt.typ_to_trait_impls.get(&t) {
+            if let Some(imps) = ctxt.indexes.typ_to_trait_impls.get(&t) {
                 for imp in imps {
                     reach_trait_impl(ctxt, state, imp);
                 }
@@ -666,12 +766,12 @@ fn traverse_reachable(ctxt: &Ctxt, state: &mut State) {
             continue;
         }
         if let Some(b) = state.worklist_bound_traits.pop() {
-            if let Some(impls) = ctxt.trait_to_trait_impls.get(&b) {
+            if let Some(impls) = ctxt.indexes.trait_to_trait_impls.get(&b) {
                 for imp in impls {
                     reach_trait_impl(ctxt, state, imp);
                 }
             }
-            if let Some(tr) = ctxt.trait_map.get(&b) {
+            if let Some(tr) = ctxt.indexes.trait_map.get(&b) {
                 // For assoc_type_trait_bounds_to_air, reach typ_bounds and assoc_typs_bounds
                 traverse_generic_bounds(ctxt, state, &tr.x.typ_bounds, true);
                 traverse_generic_bounds(ctxt, state, &tr.x.assoc_typs_bounds, true);
@@ -679,7 +779,7 @@ fn traverse_reachable(ctxt: &Ctxt, state: &mut State) {
             continue;
         }
         if let Some(i) = state.worklist_trait_impls.pop() {
-            if let Some(trait_impl) = ctxt.trait_impl_map.get(&i) {
+            if let Some(trait_impl) = ctxt.indexes.trait_impl_map.get(&i) {
                 for bound_trait in &trait_impl.bound_traits {
                     reach_bound_trait(ctxt, state, bound_trait);
                 }
@@ -706,7 +806,7 @@ fn traverse_reachable(ctxt: &Ctxt, state: &mut State) {
             continue;
         }
         if let Some(assoc_group) = state.worklist_assoc_type_impls.pop() {
-            if let Some(assoc_impls) = ctxt.assoc_type_impl_map.get(&assoc_group) {
+            if let Some(assoc_impls) = ctxt.indexes.assoc_type_impl_map.get(&assoc_group) {
                 for assoc_impl in assoc_impls {
                     traverse_generic_bounds(ctxt, state, &assoc_impl.x.typ_bounds, false);
                     crate::ast_visitor::map_assoc_type_impl_visitor_env(&assoc_impl, state, &ft)
@@ -928,6 +1028,30 @@ pub fn prune_krate_for_module_or_krate(
     fun: Option<&Fun>,
     collect_monotyps: bool,
     collect_resolve_typs: bool,
+) -> (Krate, PruneInfo) {
+    prune_krate_for_module_or_krate_with_indexes(
+        krate,
+        crate_name,
+        current_crate,
+        module,
+        fun,
+        collect_monotyps,
+        collect_resolve_typs,
+        None,
+    )
+}
+
+/// Prune freshly, sharing only immutable indexes of the exact current AST.
+/// Unsupported scopes and different owners construct their own indexes.
+pub fn prune_krate_for_module_or_krate_with_indexes(
+    krate: &Krate,
+    crate_name: &CrateId,
+    current_crate: Option<&Krate>,
+    module: Option<Path>,
+    fun: Option<&Fun>,
+    collect_monotyps: bool,
+    collect_resolve_typs: bool,
+    prepared: Option<&ModulePruneIndexes>,
 ) -> (Krate, PruneInfo) {
     assert!(module.is_some() != current_crate.is_some());
 
@@ -1165,11 +1289,6 @@ pub fn prune_krate_for_module_or_krate(
     let mut reveal_group_map: HashMap<Fun, RevealGroup> = HashMap::new();
     let mut datatype_map: HashMap<Dt, Datatype> = HashMap::new();
     let mut opaque_ty_map: HashMap<OpaqueTyName, OpaqueType> = HashMap::new();
-    let mut trait_map: HashMap<Path, Trait> = HashMap::new();
-    let mut assoc_type_impl_map: HashMap<AssocTypeGroup, Vec<AssocTypeImpl>> = HashMap::new();
-    let mut trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>> = HashMap::new();
-    let mut typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>> = HashMap::new();
-    let mut trait_impl_map: HashMap<ImplName, ReachTraitImpl> = HashMap::new();
     let mut method_map: HashMap<(ReachedType, Fun), Vec<Fun>> = HashMap::new();
     let mut fun_to_trigger_broadcasts: HashMap<Fun, Vec<Fun>> = HashMap::new();
     let mut typ_to_trigger_broadcasts: HashMap<ReachedType, Vec<Fun>> = HashMap::new();
@@ -1221,77 +1340,22 @@ pub fn prune_krate_for_module_or_krate(
     for op in &opaque_types {
         opaque_ty_map.insert(op.x.name.clone(), op.clone());
     }
-    for tr in krate.traits.iter() {
-        trait_map.insert(tr.x.name.clone(), tr.clone());
-    }
-
-    for imp in krate.trait_impls.iter() {
-        let mut bound_traits: Vec<TraitName> = Vec::new();
-        let mut bound_types: Vec<ReachedType> = Vec::new();
-        for bound in imp.x.typ_bounds.iter() {
-            match &**bound {
-                crate::ast::GenericBoundX::Trait(tid, typ_args) => {
-                    match tid {
-                        TraitId::Path(path) => {
-                            bound_traits.push(path.clone());
-                        }
-                        TraitId::Sizedness(_) => {}
-                    }
-                    for t in typ_args.iter() {
-                        bound_types.push(typ_to_reached_type(t));
-                    }
-                }
-                crate::ast::GenericBoundX::TypEquality(path, typ_args, _name, typ) => {
-                    bound_traits.push(path.clone());
-                    for t in typ_args.iter() {
-                        bound_types.push(typ_to_reached_type(t));
-                    }
-                    bound_types.push(typ_to_reached_type(typ));
-                }
-                crate::ast::GenericBoundX::ConstTyp(t, s) => {
-                    bound_types.push(typ_to_reached_type(t));
-                    bound_types.push(typ_to_reached_type(s));
-                }
-            }
-        }
-        let trait_impl = ReachTraitImpl {
-            trait_impl: imp.clone(),
-            bound_traits,
-            bound_types,
-            trait_typ_args: imp.x.trait_typ_args.iter().map(typ_to_reached_type).collect(),
-        };
-        if !trait_to_trait_impls.contains_key(&imp.x.trait_path) {
-            trait_to_trait_impls.insert(imp.x.trait_path.clone(), Vec::new());
-        }
-        trait_to_trait_impls.get_mut(&imp.x.trait_path).unwrap().push(imp.x.impl_path.clone());
-        for t in &trait_impl.trait_typ_args {
-            if !typ_to_trait_impls.contains_key(t) {
-                typ_to_trait_impls.insert(t.clone(), Vec::new());
-            }
-            typ_to_trait_impls.get_mut(&t).unwrap().push(imp.x.impl_path.clone());
-        }
-        assert!(module.is_none() || !trait_impl_map.contains_key(&imp.x.impl_path));
-        trait_impl_map.insert(imp.x.impl_path.clone(), trait_impl);
-    }
-
-    for a in &krate.assoc_type_impls {
-        let key = a.x.prune_name();
-        if !assoc_type_impl_map.contains_key(&key) {
-            assoc_type_impl_map.insert(key.clone(), Vec::new());
-        }
-        assoc_type_impl_map.get_mut(&key).unwrap().push(a.clone());
-    }
+    let indexes = prepared
+        .filter(|prepared| {
+            module.is_some() && current_crate.is_none() && Arc::ptr_eq(&prepared.owner, krate)
+        })
+        .map(|prepared| prepared.indexes.clone())
+        .unwrap_or_else(|| Arc::new(PruneIndexes::new(krate)));
+    // Crate-mode pruning historically permits duplicate impl paths (last wins).
+    // Module mode still refuses them, even when the index was prepared earlier.
+    assert!(module.is_none() || !indexes.duplicate_trait_impls);
     let ctxt = Ctxt {
         module: module.clone(),
+        indexes,
         function_map,
         reveal_group_map,
         datatype_map,
         opaque_ty_map,
-        trait_map,
-        trait_to_trait_impls,
-        typ_to_trait_impls,
-        trait_impl_map,
-        assoc_type_impl_map,
         method_map,
         fun_to_trigger_broadcasts,
         typ_to_trigger_broadcasts,

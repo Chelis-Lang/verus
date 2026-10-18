@@ -1989,6 +1989,7 @@ impl Verifier {
         source_map: Option<&SourceMap>,
         bucket_id: &BucketId,
         mut global_ctx: vir::context::GlobalCtx,
+        prune_indexes: Option<&vir::prune::ModulePruneIndexes>,
     ) -> Result<vir::context::GlobalCtx, VirErr> {
         let time_verify_start = Instant::now();
 
@@ -1999,7 +2000,7 @@ impl Verifier {
         if !SAIL_BUCKET_START_REPORTED.with(|reported| reported.replace(false)) {
             self.report_bucket_start(reporter, bucket_id);
         }
-        let (pruned_krate, prune_info) = vir::prune::prune_krate_for_module_or_krate(
+        let (pruned_krate, prune_info) = vir::prune::prune_krate_for_module_or_krate_with_indexes(
             &krate,
             self.crate_id.as_ref().expect("crate_id"),
             None,
@@ -2007,6 +2008,7 @@ impl Verifier {
             bucket_id.function(),
             true,
             true,
+            prune_indexes,
         );
         let vir::prune::PruneInfo {
             mono_abstract_datatypes,
@@ -2174,6 +2176,9 @@ impl Verifier {
         let buckets = user_filter.filter_buckets(buckets);
         let bucket_ids: Vec<BucketId> = buckets.iter().map(|p| p.0.clone()).collect();
         self.buckets = buckets.into_iter().collect();
+        // All buckets below consume this exact simplified AST. Keep their
+        // visibility/reachability state fresh while sharing only pure indexes.
+        let prune_indexes = vir::prune::ModulePruneIndexes::for_buckets(&krate, !bucket_ids.is_empty());
 
         let time_verify_sequential_end = Instant::now();
         self.time_verify_crate_sequential =
@@ -2230,6 +2235,7 @@ impl Verifier {
                 let mut thread_verifier = self.from_self();
                 let thread_taskq = taskq.clone();
                 let thread_krate = krate.clone(); // is an Arc<T>
+                let thread_prune_indexes = prune_indexes.clone();
 
                 let worker_sender = sender.clone();
                 let worker = std::thread::spawn(move || {
@@ -2255,6 +2261,7 @@ impl Verifier {
                                     None,
                                     &bucket_id,
                                     task,
+                                    thread_prune_indexes.as_deref(),
                                 );
                                 if let Err(e) = &res {
                                     // Sail fork (VI-0007): report a bucket's error in
@@ -2602,6 +2609,7 @@ impl Verifier {
                     Some(source_map),
                     bucket_id,
                     global_ctx,
+                    prune_indexes.as_deref(),
                 )?;
             }
         }
