@@ -7,7 +7,75 @@ use std::{
     path::Path,
 };
 
-// Source-only controls: all new compiler runs remain uncompiled/unrun.
+// Repaired focused fixtures; original five failed runtime results remain indexed externally.
+// Duplicate declarations are strict original-frontend-refusal controls; complete-set
+// duplicate alias fallback remains covered by the mandatory pure VIR unit.
+
+fn baseline_screen() -> bool {
+    std::env::var_os("SAIL_VI0030_BASELINE_SCREEN").is_some()
+}
+// Preserve complete raw compiler evidence at a caller-selected fixed path for
+// independent accepted-runtime comparison. Normal fork tests own a TempDir.
+enum FixtureDir {
+    Preserved(std::path::PathBuf),
+    Temporary(tempfile::TempDir),
+}
+impl FixtureDir {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Preserved(path) => path,
+            Self::Temporary(dir) => dir.path(),
+        }
+    }
+}
+fn fixture_dir() -> FixtureDir {
+    if let Some(root) = std::env::var_os("SAIL_VI0030_FIXTURE_ROOT") {
+        let thread = std::thread::current();
+        let name = thread.name().expect("named fixture");
+        let path = std::path::PathBuf::from(root).join(name);
+        if path.exists() {
+            std::fs::remove_dir_all(&path).unwrap();
+        }
+        std::fs::create_dir_all(&path).unwrap();
+        FixtureDir::Preserved(path)
+    } else {
+        FixtureDir::Temporary(tempfile::tempdir().unwrap())
+    }
+}
+
+fn baseline_diagnostics(dir: &Path, code: &str, name: &str, bytes: &[u8]) {
+    if let Some(root) = std::env::var_os("SAIL_VI0030_BASELINE_DIAGNOSTICS") {
+        assert!(
+            std::env::var_os("SAIL_VI0030_FIXTURE_ROOT").is_some(),
+            "independent baseline byte comparison requires the same explicit fixture root"
+        );
+        let root = std::path::PathBuf::from(root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join(format!("{name}.stderr"));
+        if baseline_screen() {
+            std::fs::write(file, bytes).unwrap();
+        } else {
+            assert_eq!(
+                std::fs::read(file).unwrap(),
+                bytes,
+                "complete independent baseline diagnostics changed"
+            );
+        }
+    } else {
+        assert!(!baseline_screen(), "baseline screen requires explicit baseline diagnostics");
+        // This normal-suite control is the SAME runtime with aliases disabled,
+        // not independent accepted-runtime conformance. Full stderr stays exact.
+        let (legacy, _) = run(
+            dir,
+            code,
+            &format!("{name}-legacy-control"),
+            &["--sail-raw=-V".to_string(), "--sail-raw=allow-inline-air".to_string()],
+        );
+        assert!(!legacy.status.success(), "negative control unexpectedly succeeded");
+        assert_eq!(legacy.stderr, bytes, "complete same-runtime legacy diagnostics changed");
+    }
+}
+
 const SLOT: &str = "/*INSERT_EMPTY_IMPL*/";
 fn source(body: &str) -> String {
     format!("use vstd::prelude::*;\n{body}")
@@ -45,6 +113,11 @@ fn run(
     args.extend_from_slice(extra);
     let args: Vec<_> = args.iter().map(String::as_str).collect();
     let output = run_verus(&args, dir, &file, true, true);
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(logs.join("compiler.stdout"), &output.stdout).unwrap();
+    std::fs::write(logs.join("compiler.stderr"), &output.stderr).unwrap();
+    std::fs::write(logs.join("source.rs"), code).unwrap();
+    std::fs::write(logs.join("fixture.args"), format!("{args:?}")).unwrap();
     (output, logs)
 }
 
@@ -150,18 +223,22 @@ fn alias_symbols(logs: &Path) -> BTreeSet<String> {
 const CLONE: &str = verus_code_str! {
     pub struct Unrelated {}
     /*INSERT_EMPTY_IMPL*/
-    #[derive(Clone)] pub struct Kept {}
+    #[derive(Copy, Clone)] pub struct Kept {}
     pub fn copy(s: &Kept) -> Kept { s.clone() }
     proof fn check() { assert(true); }
 };
 
 #[test]
 fn sail_vi0030_clone_smt_alias_survives_edit_but_original_paths_stay_original() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let original = source(CLONE);
     let (a, alogs) = checked(dir.path(), &original, "before", &[]);
     let first_names = alias_symbols(&alogs);
-    assert!(!first_names.is_empty(), "must exercise a real eligible Clone contract");
+    assert_eq!(
+        first_names.is_empty(),
+        baseline_screen(),
+        "candidate must exercise a real eligible Clone contract"
+    );
     let first_input = inputs(&alogs);
     let (_, repeat) = checked(dir.path(), &original, "repeat", &[]);
     assert_eq!(first_input, inputs(&repeat), "unchanged program's complete literal input changed");
@@ -192,13 +269,13 @@ fn sail_vi0030_inherent_and_generic_receiver_functions_keep_legacy_smt_spelling(
         pub fn call(s: &Generic<u8>, x: u8) -> (r: u8) ensures r == x { s.id(x) }
         proof fn check(s: S, x: int) { assert(s.value(x) == x + 1); }
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let (_, logs) = checked(dir.path(), &source(body), "legacy", &[]);
     assert!(alias_symbols(&logs).is_empty());
 }
 
 #[test]
-fn sail_vi0030_impossible_predicate_duplicate_methods_all_keep_legacy() {
+fn sail_vi0030_impossible_predicate_duplicate_original_frontend_refusal_matches_control() {
     let body = verus_code_str! {
         pub struct S {} pub trait Impossible {}
         pub trait Id { fn id(&self, x: u8) -> (r: u8) ensures r == x; }
@@ -208,17 +285,15 @@ fn sail_vi0030_impossible_predicate_duplicate_methods_all_keep_legacy() {
     };
     let code =
         format!("#![feature(trivial_bounds)]\n#![allow(incomplete_features)]\n{}", source(body));
-    let dir = tempfile::tempdir().unwrap();
-    let (report, logs) = checked(dir.path(), &code, "duplicate", &[]);
-    assert_eq!(paths(&report).iter().filter(|(n, _)| n.ends_with("::S::id")).count(), 2);
-    assert!(
-        alias_symbols(&logs).is_empty(),
-        "impossible duplicate was dropped before collision selection"
-    );
+    let dir = fixture_dir();
+    let (output, _) = run(dir.path(), &code, "duplicate", &[]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("E0283"));
+    baseline_diagnostics(dir.path(), &code, "impossible_duplicate", &output.stderr);
 }
 
 #[test]
-fn sail_vi0030_const_specializing_ground_duplicate_methods_all_keep_legacy() {
+fn sail_vi0030_const_specialization_original_frontend_refusal_matches_control() {
     let body = verus_code_str! {
         pub struct S {}
         pub const trait Id { fn id(&self, x: u8) -> (r: u8) ensures r == x; }
@@ -230,19 +305,21 @@ fn sail_vi0030_const_specializing_ground_duplicate_methods_all_keep_legacy() {
         "#![feature(specialization, const_trait_impl)]\n#![allow(incomplete_features)]\n{}",
         source(body)
     );
-    let dir = tempfile::tempdir().unwrap();
-    let (report, logs) = checked(dir.path(), &code, "specialization", &[]);
-    assert_eq!(paths(&report).iter().filter(|(n, _)| n.ends_with("::S::id")).count(), 2);
-    assert!(alias_symbols(&logs).is_empty(), "const child and nonconst parent alias each other");
+    let dir = fixture_dir();
+    let (output, _) = run(dir.path(), &code, "specialization", &[]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Trait-Conflict-Checker"));
+    baseline_diagnostics(dir.path(), &code, "const_specialization", &output.stderr);
 }
 
 #[test]
 fn sail_vi0030_actual_producer_native_consumer_cfg_and_ghosts_keep_original_abi() {
     let body = verus_code_str! {
-        pub struct S {}
+        #[derive(Copy, Clone)] pub struct S {}
+        pub fn clone_probe(s: &S) -> S { s.clone() }
         impl S {
             spec fn hidden(&self) -> bool { true }
-            pub(crate) spec fn restricted(&self) -> bool { true }
+            pub(crate) closed spec fn restricted(&self) -> bool { true }
             pub fn inherent_id(&self, x: u8) -> (r: u8) ensures r == x { x }
         }
         impl S { proof fn ghost_only(&self) {} } impl S {} impl S {}
@@ -253,7 +330,7 @@ fn sail_vi0030_actual_producer_native_consumer_cfg_and_ghosts_keep_original_abi(
         impl<'a> Id for S where S: Mark { fn id(&self, x: u8) -> (r: u8) { x } }
     };
     let producer = format!("#![feature(marker_trait_attr)]\n{}", source(body));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let export = dir.path().join("dep.vir");
     let extra = vec![
         "--compile".to_string(),
@@ -264,10 +341,11 @@ fn sail_vi0030_actual_producer_native_consumer_cfg_and_ghosts_keep_original_abi(
     let rows = paths(&a);
     let original = method_path(&rows, "::S::id").to_owned();
     assert!(original.contains("impl&%") && !original.contains("%sail%fn%"));
-    assert!(!alias_symbols(&producer_logs).is_empty());
+    assert_eq!(alias_symbols(&producer_logs).is_empty(), baseline_screen());
     let client = source(verus_code_str! {
         use dep::Id;
         pub fn check(s: &dep::S, x: u8) -> (r: u8) ensures r == x {
+            let _cloned = s.clone();
             dep::require(s); let y = s.inherent_id(x); s.id(y)
         }
     });
@@ -293,16 +371,23 @@ fn sail_vi0030_inline_air_flag_preserves_literal_names_and_disables_all_aliases(
         proof fn raw() { inline_air_stmt("(assert true)"); }
         pub fn call(s: &S, x: u8) -> (r: u8) ensures r == x { s.id(x) }
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let (_, logs) = checked(
         dir.path(),
         &source(body),
         "raw-air",
-        &["--sail-raw=-V".to_string(), "--sail-raw=allow-inline-air".to_string()],
+        &[
+            "--sail-raw=-V".to_string(),
+            "--sail-raw=allow-inline-air".to_string(),
+            "--sail-raw=--log".to_string(),
+            "--sail-raw=air".to_string(),
+        ],
     );
     assert!(alias_symbols(&logs).is_empty());
     let air = std::fs::read_to_string(logs.join("root.air")).unwrap();
-    assert!(air.contains("(assert true)"));
+    assert!(air.contains("(assert\n   (\"\")\n   ()\n   true\n)"));
+    let vir = std::fs::read_to_string(logs.join("crate.vir")).unwrap();
+    assert!(vir.contains("\"(assert true)\""));
 }
 
 #[test]
@@ -321,21 +406,22 @@ fn sail_vi0030_recursive_and_inherited_default_generated_paths_stay_consistent()
         proof fn check(s: &S) { assert(s.value(0) == 0); }
         pub fn call(s: &S, x: u8) -> (r: u8) ensures r == x { s.default_id(x) }
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let (_, logs) = checked(dir.path(), &source(body), "synthesized", &[]);
-    assert!(!alias_symbols(&logs).is_empty());
+    assert_eq!(alias_symbols(&logs).is_empty(), baseline_screen());
 }
 
 #[test]
 fn sail_vi0030_failed_proof_retains_complete_diagnostics_with_aliases_enabled() {
     let body = CLONE.replace("assert(true)", "assert(false)");
     let code = source(&body);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let (a, _) = run(dir.path(), &code, "bad-before", &[]);
     let (b, _) = run(dir.path(), &inserted(&code), "bad-after", &[]);
     assert!(!a.status.success() && !b.status.success());
     assert!(!a.stderr.is_empty());
     assert_eq!(a.stderr, b.stderr);
+    baseline_diagnostics(dir.path(), &code, "failed_proof", &a.stderr);
     for output in [a, b] {
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(report["verification-results"]["success"], false);

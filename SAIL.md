@@ -95,28 +95,52 @@ remain open.
 
 ## Concrete trait-function SMT spelling prototype
 
-A separate accepted-`e5365c05` branch implements the uncompiled
-[VI-0030 function-spelling source prototype](SAIL_SMT_FUNCTION_ALIAS_DESIGN.md)
-under proposed Sail ADR 0056. The accepted-runtime Vest witness establishes an
+A separate accepted-`e5365c05` branch implements the unselected
+[VI-0030 function-spelling candidate](SAIL_SMT_FUNCTION_ALIAS_DESIGN.md) under
+proposed Sail ADR 0056. The accepted-runtime Vest witness establishes an
 empty-impl insertion changing 23 full method paths and 30 literal SMT sessions,
 including untouched CBOR inputs that name an ASN.1 Clone contract.
 
-This prototype leaves all original Rust/VIR paths, closure IDs, equality/hash,
+This candidate leaves all original Rust/VIR paths, closure IDs, equality/hash,
 sorting, diagnostics, lookups and import/export bytes unchanged. A read-only map
 from the complete merged pre-prune VIR selects injective full-key spellings for
 supported exact concrete trait functions at AIR rendering only. All duplicate
 labels remain legacy; raw inline AIR disables aliases for the whole invocation.
 No coherence uniqueness or native/producer inventory parity is assumed.
 
-Two earlier uncompiled source packets failed independent review of those
-assumptions and remain rejected. The current source controls are also uncompiled
-and unrun. The supported Clone subset still needs actual classification;
-inherent methods, accepted closures, unrecorded synthetic methods and impl qids
-remain edit-sensitive. Full hex names and map work may erase a gain. No new
-dependency, SCC change, filename helper, wire change or runtime pin is included.
-Independent source review, matching runtime/vstd build, complete correctness
-and determinism, and matched full-scope actual edit-loop evidence precede any
-selection. This source establishes no gain or runtime qualification.
+The measured production source is `0a4a06cb6431d5a36e1ea4c8eb9c8da938866a24`.
+Its native normal Linux runtime and matching vstd build pass, as do five pure VIR
+controls and eight repaired compiler fixtures against both the independent
+accepted runtime and the candidate. The original failed wrapper/fixture attempts
+remain retained. Two duplicate-declaration programs are original frontend-refusal
+parity controls, not positive runtime coverage of two conflicting impl headers;
+the mandatory pure VIR control covers all-duplicate alias fallback.
+
+Three rotated native c7i.4xlarge rounds in us-east-1 retain all 27 samples for
+Vest's exact empty unrelated impl edit, using identical Sail code. Edited-call
+medians are 45.089 s accepted and 33.955 s candidate (24.693% saving); every
+candidate edited sample is below every accepted edited sample. Solver starts
+fall from 30 to 24 in every round; summed-thread SMT medians are 46.650 s and
+30.423 s. Cold medians are 89.992 s and 89.595 s. This is a matched edit screen,
+not a first-verification or default-mode acceptance claim. Of 266 target-session
+literal input hashes, 30 still change on the accepted edit and 24 on the candidate
+edit, with duplicates retained. Full named-stream attribution remains open.
+
+The delivery tests use ordinary temporary directories by default. Their three
+negative cases compare full stderr with an actual same-source, same-runtime
+`-V allow-inline-air` run, which disables aliases; this legacy control is not
+independent baseline qualification. Explicit caller-owned evidence roots retain
+the independent accepted-runtime full-byte comparison mode. The delivery-test
+adaptation still needs its own default-mode native execution.
+
+Two earlier uncompiled source packets failed independent review and remain
+rejected. Inherent methods, accepted closures, unrecorded synthetic methods and
+impl qids remain edit-sensitive. Full hex names and map work retain real costs.
+No new dependency, SCC change, filename helper, wire change or runtime pin is
+included. The complete fork suite, fresh six-call/four-comparison verdict and
+diagnostic matrix, named literal-SMT census, controlled raw crate-ID/root
+variation, determinism and full corpus qualification remain required before
+selection. This candidate is not a selected Sail runtime.
 
 ## Branches and tags
 
