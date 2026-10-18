@@ -130,6 +130,32 @@ regression tests can call its actual collector and AIR sink, using the already
 public resolved types in `PruneInfo`. No dependency, Sail command or runtime
 protocol is added by this internal test access.
 
+## Unselected raw pruning lookup follow-on
+
+A separate source-only follow-on based on the five-index/ordering/logging
+candidate also shares the raw resolved-datatype lookup and method-implementation
+lookup under the same exact simplified crate owner. The datatype lookup retains
+both the last declaration value and its original ordinal. Each resolved-type
+collector still owns its module, worklist and visited set; transparency and the
+complete closure/order calculation remain local. Method keys use the same
+self-type lowering, with original implementation order and repeated entries.
+The module-specific function/datatype/reveal maps and broadcast analysis remain
+fresh. A different crate owner rebuilds the lookups, and an empty bucket queue
+constructs none. Fresh pruning without resolved-type collection does not build
+an unused raw datatype lookup.
+The sole production caller using prepared bucket indexes passes both collection
+flags as true (`verify_bucket_outer`); preparing a nonempty queue therefore
+constructs the raw lookup once for exactly that ordinary bucket path.
+
+Three additional typed pruning controls cover duplicate datatype values/ordinals,
+module transparency with a changed owner, and replacement/foreign methods with
+a changed owner. One VIR lookup control checks ordered duplicates and independent
+method keys. These additions are uncompiled and unrun; the earlier candidate's
+passing controls do not qualify this follow-on. Source review, actual focused
+controls, normal runtime builds, literal-query and full verdict/diagnostic
+qualification, determinism and native performance remain pending. No runtime or
+default is selected and no saving is measured or claimed.
+
 ## Unselected oversized observation filename correction
 
 VI-0029 reproduces an existing logging failure with `-V spinoff-all`: a long

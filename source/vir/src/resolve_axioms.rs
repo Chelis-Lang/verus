@@ -25,9 +25,21 @@ pub enum ResolvableType {
     Array,
 }
 
+// Raw declaration lookup only: visibility, discovery and closure remain local.
+pub(crate) type ResolvedDatatypeMap = HashMap<Dt, (usize, Datatype)>;
+
+pub(crate) fn resolved_datatype_map(krate: &Krate) -> Arc<ResolvedDatatypeMap> {
+    let mut datatype_map = ResolvedDatatypeMap::new();
+    for (index, d) in krate.datatypes.iter().enumerate() {
+        // Preserve the previous last-write value and declaration ordinal.
+        datatype_map.insert(d.x.name.clone(), (index, d.clone()));
+    }
+    Arc::new(datatype_map)
+}
+
 pub struct ResolvedTypeCollection {
     module: Path,
-    datatype_map: HashMap<Dt, (usize, Datatype)>,
+    datatype_map: Arc<ResolvedDatatypeMap>,
 
     worklist: Vec<ResolvableType>,
     set: HashSet<ResolvableType>,
@@ -35,10 +47,10 @@ pub struct ResolvedTypeCollection {
 
 impl ResolvedTypeCollection {
     pub fn new(module: &Path, krate: &Krate) -> Self {
-        let mut datatype_map = HashMap::<Dt, (usize, Datatype)>::new();
-        for (index, d) in krate.datatypes.iter().enumerate() {
-            datatype_map.insert(d.x.name.clone(), (index, d.clone()));
-        }
+        Self::with_datatype_map(module, resolved_datatype_map(krate))
+    }
+
+    pub(crate) fn with_datatype_map(module: &Path, datatype_map: Arc<ResolvedDatatypeMap>) -> Self {
         ResolvedTypeCollection {
             module: module.clone(),
             datatype_map,

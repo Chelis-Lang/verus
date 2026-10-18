@@ -13,7 +13,9 @@ use crate::ast_visitor::{VisitorControlFlow, VisitorScopeMap};
 use crate::datatype_to_air::is_datatype_transparent;
 use crate::def::*;
 use crate::poly::MonoTyp;
-use crate::resolve_axioms::{ResolvableType, ResolvedTypeCollection};
+use crate::resolve_axioms::{
+    ResolvableType, ResolvedDatatypeMap, ResolvedTypeCollection, resolved_datatype_map,
+};
 use air::scope_map::ScopeMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -63,7 +65,7 @@ struct ReachBroadcastFunction {
     reach_triggers: Vec<(Vec<Fun>, Vec<ReachedType>)>,
 }
 
-/// Immutable trait indexes for buckets of one exact simplified crate.
+/// Immutable pruning lookups for buckets of one exact simplified crate.
 ///
 /// The owner is retained to prevent address reuse. No index survives the
 /// verifier invocation, and a different crate allocation takes the fresh path.
@@ -76,12 +78,29 @@ impl ModulePruneIndexes {
     /// Build only for a nonempty bucket queue; zero buckets do no new work.
     pub fn for_buckets(krate: &Krate, has_buckets: bool) -> Option<Arc<Self>> {
         has_buckets.then(|| {
-            Arc::new(Self { owner: krate.clone(), indexes: Arc::new(PruneIndexes::new(krate)) })
+            Arc::new(Self {
+                owner: krate.clone(),
+                indexes: Arc::new(PruneIndexes::new(krate, true)),
+            })
         })
     }
 }
 
+type MethodMap = HashMap<(ReachedType, Fun), Vec<Fun>>;
+
+// Insertion order and repeated implementations within each key are observable
+// worklist inputs. Never collect these values through a set or map iteration.
+fn method_map(entries: impl IntoIterator<Item = (ReachedType, Fun, Fun)>) -> MethodMap {
+    let mut methods = MethodMap::new();
+    for (self_typ, method, implementation) in entries {
+        methods.entry((self_typ, method)).or_default().push(implementation);
+    }
+    methods
+}
+
 struct PruneIndexes {
+    method_map: MethodMap,
+    resolved_datatypes: Option<Arc<ResolvedDatatypeMap>>,
     trait_map: HashMap<Path, Trait>,
     trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>>,
     typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>>,
@@ -91,7 +110,7 @@ struct PruneIndexes {
 }
 
 impl PruneIndexes {
-    fn new(krate: &Krate) -> Self {
+    fn new(krate: &Krate, collect_resolve_typs: bool) -> Self {
         let mut trait_map: HashMap<Path, Trait> = HashMap::new();
         let mut trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>> = HashMap::new();
         let mut typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>> = HashMap::new();
@@ -158,7 +177,18 @@ impl PruneIndexes {
             }
             assoc_type_impl_map.get_mut(&key).unwrap().push(a.clone());
         }
+        let method_map = method_map(krate.functions.iter().filter_map(|f| {
+            if let FunctionKind::TraitMethodImpl { method, trait_typ_args, .. }
+            | FunctionKind::ForeignTraitMethodImpl { method, trait_typ_args, .. } = &f.x.kind
+            {
+                Some((typ_to_reached_type(&trait_typ_args[0]), method.clone(), f.x.name.clone()))
+            } else {
+                None
+            }
+        }));
         Self {
+            method_map,
+            resolved_datatypes: collect_resolve_typs.then(|| resolved_datatype_map(krate)),
             trait_map,
             trait_to_trait_impls,
             typ_to_trait_impls,
@@ -176,8 +206,6 @@ struct Ctxt {
     datatype_map: HashMap<Dt, Datatype>,
     opaque_ty_map: HashMap<OpaqueTyName, OpaqueType>,
     indexes: Arc<PruneIndexes>,
-    // Map (D, T.f) -> D.f if D implements T.f:
-    method_map: HashMap<(ReachedType, Fun), Vec<Fun>>,
     // For a broadcast function f with triggers containing functions f0..fn, point f0..fn to f:
     fun_to_trigger_broadcasts: HashMap<Fun, Vec<Fun>>,
     typ_to_trigger_broadcasts: HashMap<ReachedType, Vec<Fun>>,
@@ -434,7 +462,7 @@ where
     // add D.f
     let mut method_impls: Vec<Fun> = Vec::new();
     for (self_typ, function) in iter {
-        if let Some(ms) = ctxt.method_map.get(&(self_typ.clone(), function.clone())) {
+        if let Some(ms) = ctxt.indexes.method_map.get(&(self_typ.clone(), function.clone())) {
             for method_impl in ms {
                 method_impls.push(method_impl.clone());
             }
@@ -1084,12 +1112,22 @@ pub fn prune_krate_for_module_or_krate_with_indexes(
     let is_root_module = |module_path: &Path| root_modules.contains(module_path);
     let is_root_function = |function: &Function| root_functions.contains(&function.x.name);
 
+    let indexes = prepared
+        .filter(|prepared| {
+            module.is_some() && current_crate.is_none() && Arc::ptr_eq(&prepared.owner, krate)
+        })
+        .map(|prepared| prepared.indexes.clone())
+        .unwrap_or_else(|| Arc::new(PruneIndexes::new(krate, collect_resolve_typs)));
+
     let mut state: State = Default::default();
     if collect_monotyps {
         state.mono_abstract_datatypes = Some(HashSet::new());
     }
     if collect_resolve_typs {
-        state.resolve_typs = Some(ResolvedTypeCollection::new(module.as_ref().unwrap(), &krate));
+        state.resolve_typs = Some(ResolvedTypeCollection::with_datatype_map(
+            module.as_ref().unwrap(),
+            indexes.resolved_datatypes.as_ref().unwrap().clone(),
+        ));
     }
     if let Some(current_crate) = current_crate {
         // Make sure we keep all of current_crate,
@@ -1289,7 +1327,6 @@ pub fn prune_krate_for_module_or_krate_with_indexes(
     let mut reveal_group_map: HashMap<Fun, RevealGroup> = HashMap::new();
     let mut datatype_map: HashMap<Dt, Datatype> = HashMap::new();
     let mut opaque_ty_map: HashMap<OpaqueTyName, OpaqueType> = HashMap::new();
-    let mut method_map: HashMap<(ReachedType, Fun), Vec<Fun>> = HashMap::new();
     let mut fun_to_trigger_broadcasts: HashMap<Fun, Vec<Fun>> = HashMap::new();
     let mut typ_to_trigger_broadcasts: HashMap<ReachedType, Vec<Fun>> = HashMap::new();
     let mut fun_revealed_broadcast_map: HashMap<Fun, ReachBroadcastFunction> = HashMap::new();
@@ -1298,16 +1335,6 @@ pub fn prune_krate_for_module_or_krate_with_indexes(
         function_map.insert(f.x.name.clone(), f.clone());
     }
     for f in &functions {
-        if let FunctionKind::TraitMethodImpl { method, trait_typ_args, .. }
-        | FunctionKind::ForeignTraitMethodImpl { method, trait_typ_args, .. } = &f.x.kind
-        {
-            let self_typ = &trait_typ_args[0];
-            let key = (typ_to_reached_type(self_typ), method.clone());
-            if !method_map.contains_key(&key) {
-                method_map.insert(key.clone(), Vec::new());
-            }
-            method_map.get_mut(&key).unwrap().push(f.x.name.clone());
-        }
         if revealed_functions.contains(&f.x.name) {
             let reach_triggers = collect_broadcast_triggers(&function_map, f);
             for (trig_funs, trig_typs) in &reach_triggers {
@@ -1340,12 +1367,6 @@ pub fn prune_krate_for_module_or_krate_with_indexes(
     for op in &opaque_types {
         opaque_ty_map.insert(op.x.name.clone(), op.clone());
     }
-    let indexes = prepared
-        .filter(|prepared| {
-            module.is_some() && current_crate.is_none() && Arc::ptr_eq(&prepared.owner, krate)
-        })
-        .map(|prepared| prepared.indexes.clone())
-        .unwrap_or_else(|| Arc::new(PruneIndexes::new(krate)));
     // Crate-mode pruning historically permits duplicate impl paths (last wins).
     // Module mode still refuses them, even when the index was prepared earlier.
     assert!(module.is_none() || !indexes.duplicate_trait_impls);
@@ -1356,7 +1377,6 @@ pub fn prune_krate_for_module_or_krate_with_indexes(
         reveal_group_map,
         datatype_map,
         opaque_ty_map,
-        method_map,
         fun_to_trigger_broadcasts,
         typ_to_trigger_broadcasts,
         fun_revealed_broadcast_map,
@@ -1481,4 +1501,34 @@ pub fn prune_krate_for_module_or_krate_with_indexes(
         dyn_traits: state.dyn_traits,
     };
     (Arc::new(kratex), prune_info)
+}
+
+#[cfg(test)]
+mod method_index_tests {
+    use super::*;
+
+    fn fun(name: &str) -> Fun {
+        Arc::new(crate::ast::FunX {
+            path: Arc::new(crate::ast::PathX {
+                krate: CrateId::Internal,
+                segments: Arc::new(vec![Arc::new(name.into())]),
+            }),
+        })
+    }
+
+    #[test]
+    fn method_values_keep_declaration_order_duplicates_and_independent_keys() {
+        let method = fun("method");
+        let first = fun("first");
+        let second = fun("second");
+        let other = fun("other");
+        let map = method_map([
+            (ReachedType::Bool, method.clone(), first.clone()),
+            (ReachedType::Int(crate::ast::IntRange::Int), method.clone(), other.clone()),
+            (ReachedType::Bool, method.clone(), second.clone()),
+            (ReachedType::Bool, method.clone(), first.clone()),
+        ]);
+        assert_eq!(map[&(ReachedType::Bool, method.clone())], vec![first.clone(), second, first]);
+        assert_eq!(map[&(ReachedType::Int(crate::ast::IntRange::Int), method)], vec![other]);
+    }
 }

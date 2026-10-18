@@ -525,3 +525,143 @@ fn resolved_datatypes_follow_current_declarations_after_complete_closure() {
         assert!(collected.finish() == expected); // Extra is also reached through D's field
     }
 }
+
+fn datatype_with_field(datatype: &Datatype, typ: Typ, id: u64) -> Datatype {
+    let mut value = datatype.x.clone();
+    value.variants = Arc::new(vec![Variant {
+        name: Arc::new("value".into()),
+        ctor_style: CtorPrintStyle::Braces,
+        fields: Arc::new(vec![Arc::new(air::ast::BinderX {
+            name: Arc::new("field".into()),
+            a: (typ, Mode::Exec, Visibility { restricted_to: None }),
+        })]),
+    }]);
+    Spanned::new(span(id), value)
+}
+
+fn datatype_typ(name: &str) -> Typ {
+    Arc::new(TypX::Datatype(Dt::Path(path(name)), Arc::new(vec![]), Arc::new(vec![])))
+}
+
+#[test]
+fn shared_resolved_lookup_keeps_last_duplicate_value_and_declaration_ordinal() {
+    use vir::resolve_axioms::ResolvableType;
+    let mut input = fixture();
+    let d = input.datatypes[0].clone();
+    let box_typ = Arc::new(TypX::Decorate(TypDecoration::Box, None, Arc::new(TypX::Bool)));
+    let tracked_typ = Arc::new(TypX::Decorate(TypDecoration::Tracked, None, Arc::new(TypX::Bool)));
+    let data = Arc::make_mut(&mut input);
+    data.datatypes[0] = datatype_with_field(&d, box_typ, 120);
+    data.datatypes.push(datatype_with_field(&d, tracked_typ, 121));
+    data.functions = ["D", "Extra"]
+        .iter()
+        .map(|name| {
+            let typ = datatype_typ(name);
+            bool_function(
+                name,
+                FunctionKind::Static,
+                path("m"),
+                typ.clone(),
+                Some(unary_resolved(typ)),
+            )
+        })
+        .collect();
+    let shared = ModulePruneIndexes::for_buckets(&input, true).unwrap();
+    assert_equal(prune(&input, path("m"), None), prune(&input, path("m"), Some(&shared)));
+    let (output, info) = prune(&input, path("m"), Some(&shared));
+    assert_eq!(output.datatypes.iter().map(|d| d.span.id).collect::<Vec<_>>(), vec![120, 2, 121]);
+    // The final D supplies both its fields (Tracked, never Box) and ordinal,
+    // placing Extra before D even though D's first declaration was earlier.
+    assert!(
+        info.resolved_typs.unwrap()
+            == vec![
+                ResolvableType::Decoration(TypDecoration::Tracked),
+                ResolvableType::Datatype(Dt::Path(path("Extra"))),
+                ResolvableType::Datatype(Dt::Path(path("D"))),
+            ]
+    );
+}
+
+#[test]
+fn shared_resolved_lookup_keeps_module_transparency_and_refuses_changed_owner() {
+    use vir::resolve_axioms::ResolvableType;
+    let mut input = fixture();
+    let d = datatype_with_field(&input.datatypes[0], datatype_typ("Extra"), 122);
+    let mut d_x = d.x.clone();
+    d_x.transparency =
+        DatatypeTransparency::WhenVisible(Visibility { restricted_to: Some(path("m")) });
+    let data = Arc::make_mut(&mut input);
+    data.datatypes[0] = Spanned::new(d.span.clone(), d_x);
+    data.functions = ["m", "other"]
+        .iter()
+        .map(|module| {
+            let typ = datatype_typ("D");
+            bool_function(
+                module,
+                FunctionKind::Static,
+                path(module),
+                typ.clone(),
+                Some(unary_resolved(typ)),
+            )
+        })
+        .collect();
+    let shared = ModulePruneIndexes::for_buckets(&input, true).unwrap();
+    for module in ["m", "other"] {
+        assert_equal(prune(&input, path(module), None), prune(&input, path(module), Some(&shared)));
+    }
+    assert!(
+        prune(&input, path("m"), Some(&shared)).1.resolved_typs.unwrap()
+            == vec![
+                ResolvableType::Datatype(Dt::Path(path("D"))),
+                ResolvableType::Datatype(Dt::Path(path("Extra"))),
+            ]
+    );
+    assert!(prune(&input, path("other"), Some(&shared)).1.resolved_typs.unwrap().is_empty());
+    let mut changed = input.clone();
+    let mut changed_d = changed.datatypes[0].x.clone();
+    changed_d.transparency = DatatypeTransparency::WhenVisible(Visibility { restricted_to: None });
+    Arc::make_mut(&mut changed).datatypes[0] = Spanned::new(span(123), changed_d);
+    assert!(!Arc::ptr_eq(&input, &changed));
+    assert_equal(
+        prune(&changed, path("other"), None),
+        prune(&changed, path("other"), Some(&shared)),
+    );
+    assert_eq!(prune(&changed, path("other"), Some(&shared)).1.resolved_typs.unwrap().len(), 2);
+}
+
+#[test]
+fn changed_owner_method_lookup_reaches_replacement_and_foreign_implementation() {
+    use vir::resolve_axioms::ResolvableType;
+    let input = resolved_method_fixture(false);
+    let shared = ModulePruneIndexes::for_buckets(&input, true).unwrap();
+    let mut changed = input.clone();
+    let mut replacement = changed.functions[2].x.clone();
+    replacement.name = Arc::new(FunX { path: path("replacement_impl") });
+    let mut foreign = changed.functions[3].x.clone();
+    let FunctionKind::TraitMethodImpl { method, impl_path, trait_path, trait_typ_args, .. } =
+        &foreign.kind
+    else {
+        panic!("fixture method implementation expected")
+    };
+    foreign.kind = FunctionKind::ForeignTraitMethodImpl {
+        method: method.clone(),
+        impl_path: impl_path.clone(),
+        trait_path: trait_path.clone(),
+        trait_typ_args: trait_typ_args.clone(),
+    };
+    let data = Arc::make_mut(&mut changed);
+    data.functions[2] = Spanned::new(span(124), replacement);
+    data.functions[3] = Spanned::new(span(125), foreign);
+    assert!(!Arc::ptr_eq(&input, &changed));
+    assert_equal(prune(&changed, path("m"), None), prune(&changed, path("m"), Some(&shared)));
+    let (output, info) = prune(&changed, path("m"), Some(&shared));
+    assert!(output.functions.iter().any(|f| f.x.name.path == path("replacement_impl")));
+    assert!(!output.functions.iter().any(|f| f.x.name.path == path("box_impl")));
+    assert!(
+        info.resolved_typs.unwrap()
+            == vec![
+                ResolvableType::Decoration(TypDecoration::Box),
+                ResolvableType::Decoration(TypDecoration::Tracked),
+            ]
+    );
+}
