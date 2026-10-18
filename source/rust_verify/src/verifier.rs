@@ -2112,6 +2112,19 @@ impl Verifier {
             None
         };
 
+        // The erasure hints retain the complete merged VIR from before crate
+        // pruning and external-trait demotion. Never classify collision peers
+        // from this verifier's already-pruned crate or from a single bucket.
+        let smt_aliases = self.erasure_hints.as_ref().map_or_else(
+            || Arc::new(vir::sail_smt_names::SmtAliases::default()),
+            |hints| {
+                Arc::new(vir::sail_smt_names::SmtAliases::from_merged_crate(
+                    &hints.vir_crate,
+                    self.args.allow_inline_air,
+                ))
+            },
+        );
+
         let mut global_ctx = vir::context::GlobalCtx::new(
             &krate,
             self.crate_id.clone().expect("crate_id"),
@@ -2126,6 +2139,7 @@ impl Verifier {
             self.args.axiom_usage_info,
             self.args.no_bv_simplify,
             self.args.report_long_running,
+            smt_aliases,
         )?;
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;

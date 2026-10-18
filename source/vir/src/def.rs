@@ -356,6 +356,7 @@ impl NameCtxtImpl {
 
 pub struct NameCtxt {
     imp: std::rc::Rc<std::cell::RefCell<NameCtxtImpl>>,
+    smt_aliases: Arc<crate::sail_smt_names::SmtAliases>,
 }
 
 impl NameCtxt {
@@ -363,8 +364,8 @@ impl NameCtxt {
     // consistent across an entire AIR file.
     // Therefore, code generating AIR should use the existing NameCtxt from the Ctx struct
     // for that AIR file, rather than allocating additional NameCtxt values.
-    pub(crate) fn new() -> Self {
-        Self { imp: std::rc::Rc::new(std::cell::RefCell::new(NameCtxtImpl::new())) }
+    pub(crate) fn new(smt_aliases: Arc<crate::sail_smt_names::SmtAliases>) -> Self {
+        Self { imp: std::rc::Rc::new(std::cell::RefCell::new(NameCtxtImpl::new())), smt_aliases }
     }
 
     fn krate_id_to_string(&self, id: u64, name: &str) -> String {
@@ -405,7 +406,10 @@ impl NameCtxt {
 
     pub fn fun_to_string(&self, fun: &Fun) -> String {
         let FunX { path } = &(**fun);
-        self.path_to_string(path)
+        // Rendering first preserves the original duplicate-crate registration
+        // and encounter-order decisions, even when this function is aliased.
+        let original = self.path_to_string(path);
+        self.smt_aliases.get(path).map_or(original, str::to_owned)
     }
 }
 

@@ -53,6 +53,7 @@ pub struct WarningCtx {
 
 /// Context for across all modules
 pub struct GlobalCtx {
+    pub(crate) smt_aliases: Arc<crate::sail_smt_names::SmtAliases>,
     pub(crate) chosen_triggers: std::cell::RefCell<Vec<ChosenTriggers>>, // diagnostics
     pub(crate) datatypes: Arc<HashMap<Path, (TypPositives, Variants)>>,
     pub(crate) fun_bounds: Arc<HashMap<Fun, GenericBounds>>,
@@ -322,6 +323,7 @@ impl GlobalCtx {
         axiom_usage_info: bool,
         no_bv_simplify: bool,
         report_long_running: bool,
+        smt_aliases: Arc<crate::sail_smt_names::SmtAliases>,
     ) -> Result<Self, VirErr> {
         let chosen_triggers: std::cell::RefCell<Vec<ChosenTriggers>> =
             std::cell::RefCell::new(Vec::new());
@@ -717,6 +719,7 @@ impl GlobalCtx {
         let datatype_graph = crate::recursive_types::build_datatype_graph(krate, &mut span_infos);
 
         Ok(GlobalCtx {
+            smt_aliases,
             chosen_triggers,
             datatypes: Arc::new(datatypes),
             fun_bounds: Arc::new(fun_bounds),
@@ -749,6 +752,7 @@ impl GlobalCtx {
         let qid_map = RefCell::new(HashMap::new());
 
         GlobalCtx {
+            smt_aliases: self.smt_aliases.clone(),
             chosen_triggers,
             datatypes: self.datatypes.clone(),
             fun_bounds: self.fun_bounds.clone(),
@@ -806,7 +810,7 @@ impl Ctx {
         resolved_typs: Vec<crate::resolve_axioms::ResolvableType>,
         debug: bool,
     ) -> Result<Self, VirErr> {
-        let name_ctxt = NameCtxt::new();
+        let name_ctxt = NameCtxt::new(global.smt_aliases.clone());
         let mut datatype_is_transparent: HashMap<Dt, bool> = HashMap::new();
         for datatype in krate.datatypes.iter() {
             datatype_is_transparent

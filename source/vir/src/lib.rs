@@ -65,6 +65,7 @@ mod resolution_inference;
 mod resolution_types;
 mod resolve_axioms;
 pub mod safe_api;
+pub mod sail_smt_names;
 mod scc;
 pub mod sst;
 mod sst_elaborate;
