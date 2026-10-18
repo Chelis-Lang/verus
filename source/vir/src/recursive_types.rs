@@ -1025,7 +1025,7 @@ pub fn check_traits(krate: &Krate, ctx: &GlobalCtx) -> Result<(), VirErr> {
     //   exists Self. (Dictionary_T<Self>, Self)
 
     for scc in ctx.func_call_sccs.iter() {
-        for node in ctx.func_call_graph.get_scc_nodes(scc).iter() {
+        for node in ctx.func_call_graph.get_scc_nodes_iter(scc) {
             match node {
                 // handled by decreases checking:
                 Node::Fun(_) | Node::TraitReqEns(..) => {}
