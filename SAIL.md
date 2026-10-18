@@ -314,3 +314,20 @@ Upstream's [BUILD.md](BUILD.md) and its
 
 Verus and this fork are under the MIT licence in [LICENSE](LICENSE), which is
 unchanged from upstream.
+
+## Current-invocation pruning traversal candidate (unselected)
+
+The `perf/prune-traversal-memo` experiment lazily retains the original visitor's
+ordered type, expression and place callback arguments for each current function,
+with separate full-body and bodyless variants. Every reachability callback still
+runs against the current bucket's state and context. The cache is bound to the
+exact immutable crate allocation and lasts only for that verification; it neither
+projects spans nor stores a persistent frontend key or result. Per-function and
+aggregate event limits fall back to the original visitor.
+
+The pure VIR unit suite passes on macOS, including differential fresh/cached
+pruning with a cross-module call and a nonempty resolved-type collection, current
+span/order checks, budget fallback and parallel one-time collection. Normal
+compiler builds, literal solver-input comparisons, native performance, corpus
+conformance and runtime selection remain pending. This candidate is not the
+selected runtime and establishes no performance gain yet.

@@ -18,6 +18,10 @@ use air::scope_map::ScopeMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[path = "prune_traversal.rs"]
+mod traversal;
+pub use traversal::FunctionTraversalCache;
+
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
 // Overapproximation of TypX, used to overapproximate the reached types
 // (it's ok if we fail to prune away some types)
@@ -64,6 +68,7 @@ struct ReachBroadcastFunction {
 }
 
 struct Ctxt {
+    traversals: Option<Arc<FunctionTraversalCache>>,
     module: Option<Path>,
     function_map: HashMap<Fun, Function>,
     reveal_group_map: HashMap<Fun, RevealGroup>,
@@ -594,10 +599,29 @@ fn traverse_reachable(ctxt: &Ctxt, state: &mut State) {
                 Ok(p.clone())
             };
             let mut map: VisitorScopeMap = ScopeMap::new();
-            crate::ast_visitor::map_function_visitor_env(
-                &function, &mut map, state, &fe, &fs, &ft, &fp,
-            )
-            .unwrap();
+            if let Some(events) = ctxt.traversals.as_ref().and_then(|cache| cache.events(function))
+            {
+                // Only callbacks consume bucket state; their scope arguments are
+                // unused above. Replay the exact current-AST callback sequence.
+                for event in events {
+                    match event {
+                        traversal::Event::Typ(t) => {
+                            ft(state, t).unwrap();
+                        }
+                        traversal::Event::Expr(e) => {
+                            fe(state, &mut map, e).unwrap();
+                        }
+                        traversal::Event::Place(p) => {
+                            fp(state, &mut map, p).unwrap();
+                        }
+                    }
+                }
+            } else {
+                crate::ast_visitor::map_function_visitor_env(
+                    &function, &mut map, state, &fe, &fs, &ft, &fp,
+                )
+                .unwrap();
+            }
             let methods = reached_methods(
                 ctxt,
                 state.reached_types.iter().chain([ReachedType::None].iter()).map(|t| (t, &f)),
@@ -928,6 +952,52 @@ pub fn prune_krate_for_module_or_krate(
     fun: Option<&Fun>,
     collect_monotyps: bool,
     collect_resolve_typs: bool,
+) -> (Krate, PruneInfo) {
+    prune_with_traversals(
+        krate,
+        crate_name,
+        current_crate,
+        module,
+        fun,
+        collect_monotyps,
+        collect_resolve_typs,
+        None,
+    )
+}
+
+/// Prune using only current-invocation function visitor events when available.
+pub fn prune_krate_with_traversals(
+    krate: &Krate,
+    crate_name: &CrateId,
+    current_crate: Option<&Krate>,
+    module: Option<Path>,
+    fun: Option<&Fun>,
+    collect_monotyps: bool,
+    collect_resolve_typs: bool,
+    traversals: &Arc<FunctionTraversalCache>,
+) -> (Krate, PruneInfo) {
+    let traversals = traversals.matches(krate).then(|| traversals.clone());
+    prune_with_traversals(
+        krate,
+        crate_name,
+        current_crate,
+        module,
+        fun,
+        collect_monotyps,
+        collect_resolve_typs,
+        traversals,
+    )
+}
+
+fn prune_with_traversals(
+    krate: &Krate,
+    crate_name: &CrateId,
+    current_crate: Option<&Krate>,
+    module: Option<Path>,
+    fun: Option<&Fun>,
+    collect_monotyps: bool,
+    collect_resolve_typs: bool,
+    traversals: Option<Arc<FunctionTraversalCache>>,
 ) -> (Krate, PruneInfo) {
     assert!(module.is_some() != current_crate.is_some());
 
@@ -1282,6 +1352,7 @@ pub fn prune_krate_for_module_or_krate(
         assoc_type_impl_map.get_mut(&key).unwrap().push(a.clone());
     }
     let ctxt = Ctxt {
+        traversals,
         module: module.clone(),
         function_map,
         reveal_group_map,

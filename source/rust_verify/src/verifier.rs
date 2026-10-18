@@ -1986,6 +1986,7 @@ impl Verifier {
         &mut self,
         reporter: &impl Diagnostics,
         krate: &Krate,
+        traversals: &Arc<vir::prune::FunctionTraversalCache>,
         source_map: Option<&SourceMap>,
         bucket_id: &BucketId,
         mut global_ctx: vir::context::GlobalCtx,
@@ -1999,7 +2000,7 @@ impl Verifier {
         if !SAIL_BUCKET_START_REPORTED.with(|reported| reported.replace(false)) {
             self.report_bucket_start(reporter, bucket_id);
         }
-        let (pruned_krate, prune_info) = vir::prune::prune_krate_for_module_or_krate(
+        let (pruned_krate, prune_info) = vir::prune::prune_krate_with_traversals(
             &krate,
             self.crate_id.as_ref().expect("crate_id"),
             None,
@@ -2007,6 +2008,7 @@ impl Verifier {
             bucket_id.function(),
             true,
             true,
+            traversals,
         );
         let vir::prune::PruneInfo {
             mono_abstract_datatypes,
@@ -2174,6 +2176,7 @@ impl Verifier {
         let buckets = user_filter.filter_buckets(buckets);
         let bucket_ids: Vec<BucketId> = buckets.iter().map(|p| p.0.clone()).collect();
         self.buckets = buckets.into_iter().collect();
+        let traversals = Arc::new(vir::prune::FunctionTraversalCache::new(&krate));
 
         let time_verify_sequential_end = Instant::now();
         self.time_verify_crate_sequential =
@@ -2230,6 +2233,7 @@ impl Verifier {
                 let mut thread_verifier = self.from_self();
                 let thread_taskq = taskq.clone();
                 let thread_krate = krate.clone(); // is an Arc<T>
+                let thread_traversals = traversals.clone();
 
                 let worker_sender = sender.clone();
                 let worker = std::thread::spawn(move || {
@@ -2252,6 +2256,7 @@ impl Verifier {
                                 let res = thread_verifier.verify_bucket_outer(
                                     &reporter,
                                     &thread_krate,
+                                    &thread_traversals,
                                     None,
                                     &bucket_id,
                                     task,
@@ -2599,6 +2604,7 @@ impl Verifier {
                 global_ctx = self.verify_bucket_outer(
                     reporter,
                     &krate,
+                    &traversals,
                     Some(source_map),
                     bucket_id,
                     global_ctx,
