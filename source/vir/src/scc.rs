@@ -39,6 +39,8 @@ struct Node<T: std::cmp::Eq + std::hash::Hash + Clone> {
     // index in Graph.nodes or usize::MAX
     index: NodeIndex,
     lowlink: NodeIndex,
+    // Same SCC id assigned to this node in mapping when Tarjan pops it.
+    scc: SccId,
     on_stack: bool,
 }
 
@@ -78,6 +80,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
                 edges: Vec::new(),
                 index: usize::MAX,
                 lowlink: usize::MAX,
+                scc: usize::MAX,
                 on_stack: false,
             });
         }
@@ -137,6 +140,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
                 self.nodes[w].on_stack = false;
                 component.nodes.push(w);
                 self.mapping.insert(self.nodes[w].t.clone(), component.id);
+                self.nodes[w].scc = component.id;
                 if w == v {
                     break;
                 }
@@ -165,7 +169,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         visited[s] = true;
         for v in self.sccs[s].nodes.iter() {
             for w in self.nodes[*v].edges.iter() {
-                self.sort_sccs_node(visited, sorted, self.mapping[&self.nodes[*w].t]);
+                self.sort_sccs_node(visited, sorted, self.nodes[*w].scc);
             }
         }
         sorted.push(self.nodes[self.sccs[s].rep()].t.clone());
@@ -214,23 +218,34 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         self.node_has_direct_edge_to_itself(t) || self.get_scc_size(t) > 1
     }
 
-    pub fn get_scc_rep(&self, t: &T) -> T {
+    fn checked_scc_id(&self, t: &T) -> SccId {
         assert!(self.has_run);
-        assert!(self.mapping.contains_key(&t));
-        let id = self.mapping.get(&t).expect("key was present in the line above");
-        self.nodes[self.sccs[*id].rep()].t.clone()
+        // Preserve the original missing-key assertion payload and eager failure
+        // ordering, while hashing an existing key only once.
+        *self.mapping.get(&t).expect("assertion failed: self.mapping.contains_key(&t)")
+    }
+
+    pub fn get_scc_rep(&self, t: &T) -> T {
+        let id = self.checked_scc_id(t);
+        self.nodes[self.sccs[id].rep()].t.clone()
     }
 
     pub fn in_same_scc(&self, t1: &T, t2: &T) -> bool {
         t1 == t2 || self.get_scc_rep(t1) == self.get_scc_rep(t2)
     }
 
+    /// Borrows members in the same order as `get_scc_nodes`, checking the
+    /// computed graph and requested key before returning the iterator.
+    pub fn get_scc_nodes_iter<'a>(
+        &'a self,
+        t: &T,
+    ) -> impl Iterator<Item = &'a T> + 'a + use<'a, T> {
+        let id = self.checked_scc_id(t);
+        self.sccs[id].nodes.iter().map(move |i| &self.nodes[*i].t)
+    }
+
     pub fn get_scc_nodes(&self, t: &T) -> Vec<T> {
-        assert!(self.has_run);
-        assert!(self.mapping.contains_key(&t));
-        let id = self.mapping[t];
-        let scc = &self.sccs[id];
-        scc.nodes.iter().map(|i| self.nodes[*i].t.clone()).collect()
+        self.get_scc_nodes_iter(t).cloned().collect()
     }
 
     pub fn shortest_cycle_back_to_self(&self, t: &T) -> Vec<T> {
@@ -295,7 +310,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
             }
             for v in self.sccs[scc].nodes.iter() {
                 for w in self.nodes[*v].edges.iter() {
-                    worklist.push(self.mapping[&self.nodes[*w].t]);
+                    worklist.push(self.nodes[*w].scc);
                 }
             }
         }
@@ -372,3 +387,11 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone + std::fmt::Debug> std::fmt::Debu
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "scc_index_tests.rs"]
+mod index_tests;
+
+#[cfg(test)]
+#[path = "scc_member_tests.rs"]
+mod member_tests;

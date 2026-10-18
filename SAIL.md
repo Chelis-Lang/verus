@@ -114,6 +114,42 @@ regressions are present but unrun; the corrected runtime and actual long-name
 reproduction remain unqualified. The earlier full-component digest prototype
 was rejected before compilation because it broke paired log stems.
 
+## Unselected combined SCC access experiment
+
+This branch combines the exact numeric SCC-index operations from
+`c25e91b4508922be04e337a51bf1f49d85688aaf` and member-access operations from
+`a57179c06f69c3bfe5b6d78183000a3e4b974957` on accepted fork
+`e5365c05d0a9f8c8cb655edc035ce9a2f6dde482`. A node records its SCC id beside
+its existing map insertion; internal sorting and reachability edge walks use
+that id. External representative/member queries share one eager checked map
+lookup. The owned member API retains its ordered cloned snapshot; only the
+immutable `recursive_types::check_traits` loop borrows members. The independent paired log-filename correctness repair precedes the SCC changes;
+it does not alter solver inputs or graph operations. No map creation,
+insertion order, traversal order, representative, member order, mutable caller
+or diagnostic branch is changed.
+
+Each component passed three focused native Mac VIR controls independently.
+Numeric-index result SHA-256:
+`f0be79af7a36d83b5dcf3badb47c8b5aa2d2b203cf7e632bfd66bee95515b27a`.
+Member-access result SHA-256:
+`7ba2f276015c0dd4448cf95141a14248117860378e710feef27ff94894ce5517`.
+Each graph oracle covers 6,144 cases: 512 directed three-node graphs, six node
+declaration orders and two edge insertion directions, not every edge
+permutation. Other controls check duplicate and implicit nodes, original
+map-based ordering/reachability, real hash/clone counts, borrowed storage
+identity, eager failures and first-error member order. All six SCC tests and five original log-filename tests must run
+on the actual combined source; separate component passes do not qualify it.
+
+The accepted-runtime Vest trace has 2.94% aggregate self samples in member
+access/vector specializations, but 98.29% of samples lack emitted callchains.
+It cannot attribute generic hashing to SCC traversal, identify the borrowed
+caller's share or predict a wall-time gain. The original R4 attribution failure
+and R2 replay ownership failure remain failures; R3 replay succeeded without
+establishing adequate frontend caller coverage. This authorizes one experiment,
+not a performance claim. The runtime is unbuilt and unselected. Actual combined
+controls, matching native changed/unchanged samples, exact literal SMT inputs,
+complete verdict/diagnostic comparisons and normal fork gates remain pending.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
