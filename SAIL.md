@@ -206,6 +206,55 @@ Not fixed: **VI-0011** (Cargo `no-vstd` metadata does not reach the launcher's
 macro-mode selection). The fix is not small: the launcher would have to
 decode Cargo-Verus's per-package driver arguments.
 
+## Unselected autospec type-sharing prototype
+
+This source-only prototype starts at `e5365c05` independently of the
+per-bucket pruning candidates. Autospec still runs the existing expression,
+statement, pattern, place and function recursion, including its postorder,
+scopes and call-target rewriting. Its private visitor retains each original
+immutable type `Arc` instead of recursively rebuilding an identical type graph.
+The generic visitor is unchanged. The exhaustive type match requires review
+when a type variant or field is added: every current type-recursion edge leads
+to another type, never an expression or a scope callback. Expressions nested
+inside patterns, places and function-call targets are still traversed.
+
+Three new controls use the previous mapper as the literal reference:
+complete serialized AST equivalence and real autospec rewrites; expression
+postorder, scope and first-error equivalence; and all 21 type variants with
+nested type graphs. They separately check opaque span identity, zero new type
+allocations and exact original type-Arc occurrences under identity expression
+rewriting. All three actual VIR library tests pass on native Apple silicon
+with the pinned 1.98.1 compiler, a freshly identified test executable and
+unchanged source/runtime guards. The result document is SHA-256
+`8a833aea469e038cd582eb07233e8c04bdfdd3c92b62501efc0962cdabbe1ae3`.
+No normal Verus runtime has been built, measured, qualified or selected from
+this prototype. There is no rustc query-cache change, new cache or solver-input
+normalization.
+
+| Attempt | Date | Result and limit |
+|---|---|---|
+| Mac unit 01 | 2026-10-18 | Compile FAIL: the new fixture's parameter-name closure needed an explicit borrowed-string lifetime boundary. |
+| Mac unit 02 | 2026-10-18 | 2/3 PASS: the new allocation assertion incorrectly required pre-rewrite and post-rewrite occurrence counts to match (4,025 versus 3,817); four ordinary call-target rewrites each remove a redundant 52-occurrence type branch. Complete old/new final-AST equality already passed. |
+| Mac unit 03 | 2026-10-18 | 3/3 PASS: compare actual old/new final occurrence counts, and require exact original Arc occurrences under identity expression rewriting; all real rewrite assertions and complete final-AST equality retained. |
+
+The earlier `2f798282` pruning screen remains failed. Its three-round native
+Linux Vest body-edit median improved only from 24.576 s to 24.276 s (1.22%,
+below the 5% screen), and its strict cross-runtime literal-SMT comparison
+failed. In both pristine and edited inputs, all 51 changed session pairs were
+localized to resolved-datatype assertion ordering and its ordinal names; the
+candidate bundled a separate declaration-order change with map sharing. This
+does not qualify the pruning candidate or attribute its timing to map sharing.
+The final raw archive is identified by SHA-256
+`7adc8465d8b5cd98c8272f9b44e3e45beda7b4feb95f121b14ff68e4d66e751f`.
+Sail's private `docs/validation/warm-frontend.md` is the acceptance record.
+
+Before any selection, the autospec serial region must be timed on a real
+project to establish material avoided work, followed by native matched
+measurements and the existing usefulness gates. Both-platform builds, exact
+SMT input and determinism checks, complete corpus verdict/diagnostic
+conformance and the normal runtime qualification remain pending. Source
+review and synthetic allocation controls establish no performance gain.
+
 ## Releases
 
 From `13a1176c` on, each pinned fork commit that Sail ships has prebuilt

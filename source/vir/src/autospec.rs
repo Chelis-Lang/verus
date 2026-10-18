@@ -1,7 +1,8 @@
 use crate::ast::{
-    AutospecUsage, CallTarget, Expr, ExprX, Fun, Function, Krate, KrateX, SpannedTyped, VirErr,
+    AutospecUsage, CallTarget, Expr, ExprX, Fun, Function, Krate, KrateX, Pattern, Place,
+    SpannedTyped, Stmt, Typ, TypX, VirErr,
 };
-use crate::ast_visitor::VisitorScopeMap;
+use crate::ast_visitor::{AstVisitor, Rewrite, VisitorScopeMap};
 use crate::util::vec_map_result;
 pub use air::ast_util::{ident_binder, str_ident};
 use air::scope_map::ScopeMap;
@@ -128,16 +129,88 @@ fn simplify_function(
     function: &Function,
 ) -> Result<Function, VirErr> {
     let mut map: VisitorScopeMap = ScopeMap::new();
-    crate::ast_visitor::map_function_visitor_env(
-        &function,
-        &mut map,
-        &mut (),
-        &|_state, _, expr| simplify_one_expr(func_map, expr),
-        &|_state, _, stmt| Ok(vec![stmt.clone()]),
-        &|_state, typ| Ok(typ.clone()),
-        &|_state, _, place| Ok(place.clone()),
-    )
+    map_function_preserving_types(function, &mut map, &|_, expr| simplify_one_expr(func_map, expr))
 }
+
+// Autospec changes expression call targets, never types. The ordinary type
+// recursion visits only nested types: it cannot invoke expression, statement,
+// pattern, place or scope callbacks. Keep this match exhaustive so a new type
+// variant requires revisiting that boundary before it can take this path.
+fn preserve_type(typ: &Typ) -> Typ {
+    match &**typ {
+        TypX::Bool
+        | TypX::Int(_)
+        | TypX::Real
+        | TypX::Float(_)
+        | TypX::TypParam(_)
+        | TypX::TypeId
+        | TypX::ConstInt(_)
+        | TypX::ConstBool(_)
+        | TypX::Air(_)
+        | TypX::SpecFn(_, _)
+        | TypX::AnonymousClosure(_, _, _, _)
+        | TypX::FnDef(_, _, _)
+        | TypX::Datatype(_, _, _)
+        | TypX::Dyn(_, _, _)
+        | TypX::Opaque { def_path: _, args: _ }
+        | TypX::Primitive(_, _)
+        | TypX::Decorate(_, _, _)
+        | TypX::Boxed(_)
+        | TypX::Projection { trait_typ_args: _, trait_path: _, name: _ }
+        | TypX::PointeeMetadata(_)
+        | TypX::MutRef(_) => typ.clone(),
+    }
+}
+
+struct AutospecVisitor<'a, F> {
+    map: &'a mut VisitorScopeMap,
+    expr: &'a F,
+}
+
+impl<F> AstVisitor<Rewrite, VirErr, VisitorScopeMap> for AutospecVisitor<'_, F>
+where
+    F: Fn(&mut VisitorScopeMap, &Expr) -> Result<Expr, VirErr>,
+{
+    fn visit_typ(&mut self, typ: &Typ) -> Result<Typ, VirErr> {
+        Ok(preserve_type(typ))
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) -> Result<Expr, VirErr> {
+        let expr = self.visit_expr_rec(expr)?;
+        (self.expr)(self.map, &expr)
+    }
+
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Vec<Stmt>, VirErr> {
+        Ok(vec![self.visit_stmt_rec(stmt)?])
+    }
+
+    fn visit_place(&mut self, place: &Place) -> Result<Place, VirErr> {
+        self.visit_place_rec(place)
+    }
+
+    fn visit_pattern(&mut self, pattern: &Pattern) -> Result<Pattern, VirErr> {
+        self.visit_pattern_rec(pattern)
+    }
+
+    fn scoper(&mut self) -> Option<&mut VisitorScopeMap> {
+        Some(self.map)
+    }
+}
+
+fn map_function_preserving_types<F>(
+    function: &Function,
+    map: &mut VisitorScopeMap,
+    expr: &F,
+) -> Result<Function, VirErr>
+where
+    F: Fn(&mut VisitorScopeMap, &Expr) -> Result<Expr, VirErr>,
+{
+    AutospecVisitor { map, expr }.visit_function(function)
+}
+
+#[cfg(test)]
+#[path = "autospec_type_tests.rs"]
+mod type_tests;
 
 pub fn resolve_autospec(krate: &Krate) -> Result<Krate, VirErr> {
     let KrateX {
