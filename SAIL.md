@@ -314,3 +314,35 @@ Upstream's [BUILD.md](BUILD.md) and its
 
 Verus and this fork are under the MIT licence in [LICENSE](LICENSE), which is
 unchanged from upstream.
+
+## Unselected SCC node-index prototype
+
+The source-only SCC prototype starts from accepted fork
+`e5365c05d0a9f8c8cb655edc035ce9a2f6dde482`. Each node records the numeric SCC id
+at the same Tarjan pop that inserts its existing `mapping` entry. The two
+internal edge walks in SCC sorting and reachability read that id directly,
+instead of hashing the already-indexed edge target again. Both original maps,
+their constructors and insertion order, external-key lookups, graph traversal,
+SCC membership order and representative order remain unchanged.
+
+Three targeted VIR controls **passed on macOS** with Rust 1.98.1: all 6,144
+three-node graph/declaration/edge-order combinations against the original map
+sort and reachability walks; explicit parallel-edge/cycle/implicit-node order
+witnesses; and actual key-hash counters showing which internal edge lookups
+disappear while external lookups remain. The original map-based ordering and
+reachability code is retained as a test oracle. The genuine fresh test executable
+was emitted for this worktree's VIR package under two jobs, offline and with
+debug information and incremental compilation disabled. The three tests passed
+in 0.21 seconds; the complete bounded source-unit recipe took 47.40 seconds.
+Its private raw result has SHA-256
+`f0be79af7a36d83b5dcf3badb47c8b5aa2d2b203cf7e632bfd66bee95515b27a`.
+This is source-unit qualification, not a built Verus runtime or native gain.
+
+A baseline-only native Vest CPU observation found `Path::hash` at 7.80% self
+cost and a VIR SipHasher write at 6.95%. It does not establish how much either
+SCC walk contributes: the observation failed its required autospec attribution
+gate, and Rust ancestor coverage still needs retained-data reanalysis. The
+autospec type-preservation prototype remains separate and unselected. This SCC
+source has no runtime build, native gain measurement, literal-SMT/determinism,
+whole-corpus conformance or platform qualification. Ancestor evidence and a
+material measured gain must precede any backend selection.

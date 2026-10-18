@@ -39,6 +39,8 @@ struct Node<T: std::cmp::Eq + std::hash::Hash + Clone> {
     // index in Graph.nodes or usize::MAX
     index: NodeIndex,
     lowlink: NodeIndex,
+    // Same SCC id assigned to this node in mapping when Tarjan pops it.
+    scc: SccId,
     on_stack: bool,
 }
 
@@ -78,6 +80,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
                 edges: Vec::new(),
                 index: usize::MAX,
                 lowlink: usize::MAX,
+                scc: usize::MAX,
                 on_stack: false,
             });
         }
@@ -137,6 +140,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
                 self.nodes[w].on_stack = false;
                 component.nodes.push(w);
                 self.mapping.insert(self.nodes[w].t.clone(), component.id);
+                self.nodes[w].scc = component.id;
                 if w == v {
                     break;
                 }
@@ -165,7 +169,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         visited[s] = true;
         for v in self.sccs[s].nodes.iter() {
             for w in self.nodes[*v].edges.iter() {
-                self.sort_sccs_node(visited, sorted, self.mapping[&self.nodes[*w].t]);
+                self.sort_sccs_node(visited, sorted, self.nodes[*w].scc);
             }
         }
         sorted.push(self.nodes[self.sccs[s].rep()].t.clone());
@@ -295,7 +299,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
             }
             for v in self.sccs[scc].nodes.iter() {
                 for w in self.nodes[*v].edges.iter() {
-                    worklist.push(self.mapping[&self.nodes[*w].t]);
+                    worklist.push(self.nodes[*w].scc);
                 }
             }
         }
@@ -372,3 +376,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone + std::fmt::Debug> std::fmt::Debu
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "scc_index_tests.rs"]
+mod index_tests;
