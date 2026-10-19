@@ -50,6 +50,9 @@ use vir::prelude::PreludeConfig;
 #[path = "sail_engine.rs"]
 mod sail_engine;
 
+#[path = "sail_log_file_name.rs"]
+mod sail_log_file_name;
+
 const RLIMIT_PER_SECOND_Z3: f32 = 3000000f32;
 const RLIMIT_PER_SECOND_CVC5: f32 = 333333f32; // ~= 5s
 
@@ -692,7 +695,8 @@ impl Verifier {
             None => "crate".to_string(),
             Some(bucket_id) => bucket_id.to_log_string(),
         };
-        std::path::PathBuf::from(&dir_path).join(format!("{prefix}{suffix}"))
+        std::path::PathBuf::from(&dir_path)
+            .join(sail_log_file_name::bounded(format!("{prefix}{suffix}")))
     }
 
     /// Use when we expect our call to Z3 to always succeed
@@ -2779,7 +2783,8 @@ impl Verifier {
         let map_errs_diagnostics =
             |errs: Vec<VirErr>| (errs, ctxt_diagnostics.borrow_mut().drain(..).collect());
 
-        let crate_items = crate::external::get_crate_items(&ctxtx).map_err(map_errs_diagnostics)?;
+        let mut crate_items =
+            crate::external::get_crate_items(&ctxtx).map_err(map_errs_diagnostics)?;
 
         check_no_opaque_types_in_trait(ctxtx.tcx, &crate_items).map_err(map_err_diagnostics)?;
 
@@ -2793,6 +2798,8 @@ impl Verifier {
         if tcx.dcx().err_count() != 0 {
             return Ok(false);
         }
+        ctxtx.verus_items.impl_identities.enable_after_hir_check();
+        crate::external::refresh_identity_paths(&ctxtx, &mut crate_items);
 
         let time_hir1 = Instant::now();
         self.time_hir = time_hir1 - time_hir0;

@@ -74,7 +74,7 @@ pub struct OpaqueDef {
     pub verif: VerifOrExternal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifOrExternal {
     /// Path is the *module path* containing this item
     VerusAware {
@@ -86,6 +86,43 @@ pub enum VerifOrExternal {
     /// Path/String to refer to this item for diagnostics
     /// Path is an Option because there are some items we can't compute a Path for
     External { path: Option<Path>, path_string: String, explicit: bool },
+}
+
+/// Refresh paths collected before type checking without repeating attribute
+/// classification or emitting duplicate diagnostics. Both views must agree.
+pub(crate) fn refresh_identity_paths(ctxt: &ContextX<'_>, items: &mut CrateItems) {
+    debug_assert_eq!(items.map.len(), items.items.len());
+    debug_assert!(
+        items.items.iter().all(|item| items.map.get(&item.id.owner_id()) == Some(&item.verif))
+    );
+    for item in &mut items.items {
+        let id = item.id.owner_id().to_def_id();
+        match &mut item.verif {
+            VerifOrExternal::External { path, path_string, .. } => {
+                *path = def_id_to_vir_path_option(ctxt.tcx, Some(&ctxt.verus_items), id);
+                *path_string = match path {
+                    Some(path) => vir::ast_util::path_as_friendly_rust_name(path),
+                    None => format!("{:?}", id),
+                };
+            }
+            VerifOrExternal::VerusAware { module_path, .. } => {
+                // The field means CONTAINING module, including for a Mod item.
+                let mut module = ctxt.tcx.opt_parent(id).unwrap_or(id);
+                while !matches!(ctxt.tcx.def_kind(module), rustc_hir::def::DefKind::Mod) {
+                    module = ctxt.tcx.parent(module);
+                }
+                if let Some(path) =
+                    def_id_to_vir_path_option(ctxt.tcx, Some(&ctxt.verus_items), module)
+                {
+                    *module_path = path;
+                }
+            }
+        }
+        items.map.insert(item.id.owner_id(), item.verif.clone());
+    }
+    debug_assert!(
+        items.items.iter().all(|item| items.map.get(&item.id.owner_id()) == Some(&item.verif))
+    );
 }
 
 /// Abstracts over the different the different ItemX things in rust

@@ -94,12 +94,13 @@ impl State {
         kind: ClosureKind,
         id: ClosureId,
     ) -> Path {
+        let path = crate::def::prefix_closure_type(&id);
         let e = self.closure_typs.entry(id).or_insert(ClosureDatatype {
             enclosing_fun: fun.clone(),
             args: typs,
             output: typ,
             kind: kind,
-            path: crate::def::prefix_closure_type(id),
+            path,
         });
         assert!(&e.enclosing_fun == &fun);
         e.path.clone()
@@ -797,8 +798,13 @@ fn simplify_one_typ(local: &LocalCtxt, state: &mut State, typ: &Typ) -> Result<T
                     format!("Verus Internal Error: found AnonymousClosure type outside function"),
                 ));
             };
-            let path =
-                Dt::Path(state.closure_type_name(fun, typs.clone(), typ.clone(), *kind, *id));
+            let path = Dt::Path(state.closure_type_name(
+                fun,
+                typs.clone(),
+                typ.clone(),
+                *kind,
+                id.clone(),
+            ));
             let typ_args: Vec<Typ> = local
                 .typ_params
                 .iter()
@@ -1545,7 +1551,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
     // Preserve stock's local declaration order (rustc's DefIndex). Imported
     // trait default bodies can contain closures from different crates with
     // the same local index; break those ties independently of HashMap order.
-    closures.sort_by_key(|kv| (kv.0.order, kv.0.stable_crate_id, kv.0.name));
+    closures.sort_by(|a, b| a.0.order.cmp(&b.0.order).then_with(|| a.0.identity_cmp(&b.0)));
     for (id, closure) in closures {
         // Right now, we translate the closure type into an a global datatype.
         //
@@ -1611,7 +1617,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
         ));
         let impl_path = Arc::new(crate::ast::PathX {
             krate: CrateId::Internal,
-            segments: Arc::new(vec![crate::def::impl_closure(closure.kind, id)]),
+            segments: Arc::new(vec![crate::def::impl_closure(closure.kind, &id)]),
         });
         let trait_typ_args = Arc::new(vec![self_typ.clone(), args_tuple_typ.clone()]);
         let trait_implx = crate::ast::TraitImplX {

@@ -143,7 +143,9 @@ fn handle_autospec<'tcx>(
             );
         }
         let mut this_path = crate::rust_to_vir_base::def_id_to_vir_path_ignoring_diagnostic_rename(
-            ctxt.tcx, def_id,
+            ctxt.tcx,
+            &ctxt.verus_items,
+            def_id,
         );
         if matches!(&functionx.kind, FunctionKind::TraitMethodImpl { .. }) {
             // pop off impl&%n:: (we want method_name, not Self::method_name)
@@ -153,7 +155,9 @@ fn handle_autospec<'tcx>(
         Ok(Autospec { redirect_to: Some(Arc::new(FunX { path })), new_func: None })
     } else if vattrs.allow_in_spec {
         let mut this_path = crate::rust_to_vir_base::def_id_to_vir_path_ignoring_diagnostic_rename(
-            ctxt.tcx, def_id,
+            ctxt.tcx,
+            &ctxt.verus_items,
+            def_id,
         );
         if functionx.mode != Mode::Exec {
             return err_span(span, format!("allow_in_spec can only be used on an exec function"));
@@ -2836,7 +2840,9 @@ pub(crate) fn remove_ignored_trait_bounds_from_predicates<'tcx>(
                 let is_local = id.is_local();
                 let mut is_external_trait_private_bound = false;
                 let is_match = |ignore: &Vec<String>| -> bool {
-                    if let Some(path) = def_path_to_vir_path(tcx, tcx.def_path(id)) {
+                    if let Some(path) =
+                        def_path_to_vir_path(tcx, id, Some(&ctxt.verus_items.impl_identities))
+                    {
                         ignore.len() == path.segments.len() + 1
                             && ignore[0] == krate_to_string_ignore_stable_id(&path.krate)
                             && (0..path.segments.len())

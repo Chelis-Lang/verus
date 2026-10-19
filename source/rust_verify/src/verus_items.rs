@@ -806,6 +806,7 @@ fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
 }
 
 pub(crate) struct VerusItems {
+    pub(crate) impl_identities: crate::sail_impl_identity::ImplIdentities,
     pub(crate) id_to_name: HashMap<DefId, VerusItem>,
     pub(crate) name_to_id: HashMap<VerusItem, DefId>,
     // RustPrivate items also map to an underlying Rust DefId (in addition to the Verus DefId):
@@ -853,7 +854,12 @@ pub(crate) fn from_diagnostic_items(tcx: TyCtxt) -> VerusItems {
             }
         }
     }
-    VerusItems { id_to_name, name_to_id, name_to_rust_private_id }
+    VerusItems {
+        impl_identities: Default::default(),
+        id_to_name,
+        name_to_id,
+        name_to_rust_private_id,
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]

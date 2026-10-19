@@ -6,7 +6,6 @@ use crate::util::err_span;
 use crate::verus_items::{self, BuiltinTypeItem, RustItem, VerusItem};
 use crate::{unsupported_err, unsupported_err_unless};
 use rustc_ast::{BindingMode, ByRef, Mutability};
-use rustc_hir::definitions::DefPath;
 use rustc_hir::{GenericParam, GenericParamKind, Generics, HirId, LifetimeParamKind, QPath, Ty};
 use rustc_infer::infer::TyCtxtInferExt;
 use rustc_middle::ty::{
@@ -42,34 +41,41 @@ pub(crate) fn mk_crate_id<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> CrateId {
     }
 }
 
-pub(crate) fn def_path_to_vir_path<'tcx>(tcx: TyCtxt<'tcx>, def_path: DefPath) -> Option<Path> {
-    let krate = mk_crate_id(tcx, def_path.krate);
+pub(crate) fn def_path_to_vir_path<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    identities: Option<&crate::sail_impl_identity::ImplIdentities>,
+) -> Option<Path> {
+    let krate = mk_crate_id(tcx, def_id.krate);
+    let mut owners = Vec::new();
+    let mut current = def_id;
+    while let Some(parent) = tcx.opt_parent(current) {
+        owners.push(current);
+        current = parent;
+    }
+    owners.reverse();
     let mut segments: Vec<vir::ast::Ident> = Vec::new();
-    for d in def_path.data.iter() {
+    for owner in owners {
+        let d = tcx.def_key(owner).disambiguated_data;
         use rustc_hir::definitions::DefPathData;
         match &d.data {
             DefPathData::ValueNs(symbol) | DefPathData::TypeNs(symbol) => {
                 segments.push(Arc::new(symbol.to_string()));
             }
-            DefPathData::Ctor => {
-                segments.push(Arc::new(vir::def::RUST_DEF_CTOR.to_string()));
-            }
+            DefPathData::Ctor => segments.push(Arc::new(vir::def::RUST_DEF_CTOR.to_string())),
             DefPathData::Impl => {
-                segments.push(vir::def::impl_ident(d.disambiguator));
+                let stable = identities.and_then(|ids| ids.get(tcx, owner));
+                segments.push(
+                    stable.map_or_else(|| vir::def::impl_ident(d.disambiguator), |id| id.ident),
+                );
             }
-            DefPathData::ForeignMod => {
-                // this segment can be ignored
-            }
-            DefPathData::OpaqueTy => {
-                segments.push(Arc::new(
-                    vir::def::RUST_OPAQUE_TYPE.to_string() + &d.disambiguator.to_string(),
-                ));
-            }
-            DefPathData::Closure => {
-                segments.push(Arc::new(
-                    vir::def::RUST_DEF_CLOSURE.to_string() + &d.disambiguator.to_string(),
-                ));
-            }
+            DefPathData::ForeignMod => {}
+            DefPathData::OpaqueTy => segments.push(Arc::new(
+                vir::def::RUST_OPAQUE_TYPE.to_string() + &d.disambiguator.to_string(),
+            )),
+            DefPathData::Closure => segments.push(Arc::new(
+                vir::def::RUST_DEF_CLOSURE.to_string() + &d.disambiguator.to_string(),
+            )),
             _ => return None,
         }
     }
@@ -112,7 +118,7 @@ fn register_friendly_path_as_rust_name<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, p
             rustc_hir::TyKind::Path(QPath::Resolved(
                 None,
                 rustc_hir::Path { res: rustc_hir::def::Res::Def(_, self_def_id), .. },
-            )) => def_path_to_vir_path(tcx, tcx.def_path(*self_def_id)),
+            )) => def_path_to_vir_path(tcx, *self_def_id, None),
             _ => {
                 // To handle cases like [T] which are not syntactically datatypes
                 // but converted into VIR datatypes.
@@ -174,7 +180,7 @@ pub(crate) fn def_id_to_vir_path_option<'tcx>(
             }
         }
     }
-    let path = def_path_to_vir_path(tcx, tcx.def_path(def_id));
+    let path = def_path_to_vir_path(tcx, def_id, verus_items.map(|items| &items.impl_identities));
     if let Some(path) = &path {
         register_friendly_path_as_rust_name(tcx, def_id, path);
     }
@@ -183,10 +189,14 @@ pub(crate) fn def_id_to_vir_path_option<'tcx>(
 
 pub(crate) fn def_id_to_vir_path_ignoring_diagnostic_rename<'tcx>(
     tcx: TyCtxt<'tcx>,
+    verus_items: &crate::verus_items::VerusItems,
     def_id: DefId,
 ) -> Path {
-    def_id_to_vir_path_option(tcx, None, def_id)
-        .unwrap_or_else(|| panic!("unhandled name {:?}", def_id))
+    // Skip the special diagnostic/Rust-private redirect, not the identity table.
+    let path = def_path_to_vir_path(tcx, def_id, Some(&verus_items.impl_identities))
+        .unwrap_or_else(|| panic!("unhandled name {:?}", def_id));
+    register_friendly_path_as_rust_name(tcx, def_id, &path);
+    path
 }
 
 pub(crate) fn def_id_to_vir_path<'tcx>(
@@ -1234,10 +1244,16 @@ pub(crate) fn mid_ty_to_vir_ghost<'tcx>(
             // by its crate-wide index, so inserting an item elsewhere does not
             // rename it. The index still orders declarations as stock does.
             let def_path_hash = tcx.def_path_hash(*def);
+            let stable_impl_key = verus_items.impl_identities.closure_key(tcx, *def);
             let id = vir::ast::ClosureId {
-                name: def_path_hash.local_hash().as_u64(),
+                name: if stable_impl_key.is_some() {
+                    0
+                } else {
+                    def_path_hash.local_hash().as_u64()
+                },
                 stable_crate_id: def_path_hash.stable_crate_id().as_u64(),
                 order: def.as_local().unwrap().local_def_index.index(),
+                stable_impl_key,
             };
 
             let kind = substs.as_closure().kind();

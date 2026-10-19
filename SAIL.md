@@ -93,6 +93,38 @@ failed compilation emits no record); the witness stubs source-base configuration
 The full fork build, Linux consumer integration and complete input qualification
 remain open.
 
+## Anonymous impl identity prototype
+
+The separate accepted-`e5365c05` branch implements a narrow
+[VI-0030 source prototype](SAIL_STABLE_IMPL_IDENTITY_DESIGN.md), under proposed
+Sail ADR 0056. Actual accepted-runtime Vest calls establish the cause: an empty
+impl shifts later method names and changes literal input in untouched CBOR
+modules. Prototype02 supports only positive, non-marker concrete trait references
+with zero-argument nominal Self and no other trait arguments; inherent impls
+remain legacy. Coherence completes before activation. Keys contain full typed
+crate/module/Self/trait identity and no member set or peer inventory; private
+ghost erasure no longer changes a retained implementation's key. Closures carry
+the same complete parent in names, equality, hashing and exports.
+
+Prototype01's sealed source failed independent static review of producer/native
+ghost-member parity and was never compiled. The narrower policy's arbitrary
+cfg/header eligibility boundary remains an explicit source-review obligation;
+no new import error is accepted as a default fix. All new source controls remain
+uncompiled and unrun, including real producer/native/consumer ghost, restricted,
+ghost-only, duplicate, lifetime/predicate and over-limit controls. The original
+23 changed method paths and 30 changed literal sessions remain the measurement
+scope; no subset gain is inferred from source.
+
+The independent `470258b0` paired filename helper includes a spinoff-suffix
+correction preserving `._NN[_expand]` outside its complete-stem digest; AIR and
+transcript retain the same bounded stem. Helper and Sail obligation-ID controls
+are unrun. No SCC or dependency changes are included. Full keys can cost bytes,
+memory and solver work. Independent source review, matching vstd/exports,
+complete correctness/determinism and matched edit-loop evidence precede any
+runtime or default-pin selection. A fixed export-format version is checked
+before bincode decoding; old/missing/truncated/mismatched exports require matching
+runtime/vstd/all-export rebuilds. No stock or mixed exports are accepted. No gain is claimed.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,

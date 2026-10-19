@@ -1070,40 +1070,62 @@ pub struct CtorUpdateTail {
 
 /// Identity of an anonymous closure type.
 ///
-/// Sail fork (VI-0019): `stable_crate_id` and `name` retain both halves of
-/// rustc's `DefPathHash`. The pair is used in the closure's SMT names
-/// (`anonymous_closure%<crate>_<name>`, `impl_closure&%<kind><crate>_<name>`).
-/// The local half depends on the closure's definition path (enclosing items
-/// and per-parent disambiguators). Rustc checks its uniqueness within the
-/// crate and checks the stable crate ID when loading a crate graph; the local
-/// half alone does not carry the whole-graph identity guarantee.
-/// Stock Verus uses rustc's crate-wide `DefIndex` instead, so inserting any
-/// item renumbered every later closure in the crate.
-///
-/// `order` is that `DefIndex`. It is used only to order the closure
-/// declarations in stock's local order. Different imported crates can reuse
-/// that index, so ties are broken by the complete pair. Equality and hashing
-/// use both identity halves and ignore `order`, so unrelated items cannot
-/// change a closure's identity.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToDebugSNode)]
+/// VI-0019's legacy identity retains both halves of rustc's DefPathHash.
+/// VI-0030 optionally replaces the impl-dependent local half with the complete
+/// injectively encoded semantic impl key and relative definition path. The
+/// complete selected identity enters names, equality, hashing and exports.
+/// `order` retains the original DefIndex only for declaration ordering.
+#[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct ClosureId {
     pub name: u64,
     pub stable_crate_id: u64,
     pub order: usize,
+    pub stable_impl_key: Option<Ident>,
+}
+
+impl ClosureId {
+    /// Complete solver spelling, with disjoint stable and legacy namespaces.
+    pub fn solver_name(&self) -> String {
+        match &self.stable_impl_key {
+            Some(key) => format!("{}_s1{}", self.stable_crate_id, key),
+            None => format!("{}_{}", self.stable_crate_id, self.name),
+        }
+    }
+
+    /// Tie-break imported equal ordering indices by the complete identity.
+    pub fn identity_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.stable_crate_id.cmp(&other.stable_crate_id).then_with(|| {
+            match (&self.stable_impl_key, &other.stable_impl_key) {
+                (Some(a), Some(b)) => a.cmp(b),
+                (None, None) => self.name.cmp(&other.name),
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+            }
+        })
+    }
 }
 
 impl PartialEq for ClosureId {
     fn eq(&self, other: &Self) -> bool {
-        self.stable_crate_id == other.stable_crate_id && self.name == other.name
+        self.stable_crate_id == other.stable_crate_id
+            && match (&self.stable_impl_key, &other.stable_impl_key) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => self.name == other.name,
+                _ => false,
+            }
     }
 }
-
 impl Eq for ClosureId {}
-
 impl std::hash::Hash for ClosureId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.stable_crate_id.hash(state);
-        self.name.hash(state);
+        match &self.stable_impl_key {
+            None => self.name.hash(state),
+            Some(key) => {
+                1u8.hash(state);
+                key.hash(state);
+            }
+        }
     }
 }
 
@@ -1126,7 +1148,7 @@ mod closure_identity_tests {
         }
     }
 
-    fn hash_bytes(id: ClosureId) -> Vec<u8> {
+    fn hash_bytes(id: &ClosureId) -> Vec<u8> {
         let mut state = HashBytes::default();
         id.hash(&mut state);
         state.0
@@ -1137,34 +1159,69 @@ mod closure_identity_tests {
         // Force the collision which a naturally generated two-crate fixture
         // cannot reliably produce. Both the key and hash input must retain
         // the crate half; the ordering index must not become identity.
-        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7 };
-        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7 };
-        let same_a = ClosureId { order: 99, ..a };
+        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7, stable_impl_key: None };
+        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7, stable_impl_key: None };
+        let same_a = ClosureId { order: 99, ..a.clone() };
         let mut types = HashMap::new();
-        types.insert(a, "crate A");
-        types.insert(b, "crate B");
+        types.insert(a.clone(), "crate A");
+        types.insert(b.clone(), "crate B");
         assert_ne!(a, b);
         assert_eq!(types.len(), 2);
         assert_eq!(types[&same_a], "crate A");
-        assert_eq!(hash_bytes(a), [1u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
-        assert_eq!(hash_bytes(b), [2u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
-        assert_eq!(hash_bytes(a), hash_bytes(same_a));
+        assert_eq!(hash_bytes(&a), [1u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
+        assert_eq!(hash_bytes(&b), [2u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
+        assert_eq!(hash_bytes(&a), hash_bytes(&same_a));
     }
 
     #[test]
     fn closure_and_impl_names_retain_both_halves_but_not_order() {
-        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7 };
-        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7 };
-        let same_a = ClosureId { order: 99, ..a };
-        let a_path = crate::def::prefix_closure_type(a);
-        let b_path = crate::def::prefix_closure_type(b);
+        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7, stable_impl_key: None };
+        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7, stable_impl_key: None };
+        let same_a = ClosureId { order: 99, ..a.clone() };
+        let a_path = crate::def::prefix_closure_type(&a);
+        let b_path = crate::def::prefix_closure_type(&b);
         assert_eq!(&*a_path.segments[0], "anonymous_closure%1_42");
         assert_eq!(&*b_path.segments[0], "anonymous_closure%2_42");
         assert_ne!(a_path, b_path);
-        assert_eq!(a_path, crate::def::prefix_closure_type(same_a));
+        assert_eq!(a_path, crate::def::prefix_closure_type(&same_a));
         for kind in [ClosureKind::Fn, ClosureKind::FnMut, ClosureKind::FnOnce] {
-            assert_ne!(crate::def::impl_closure(kind, a), crate::def::impl_closure(kind, b));
-            assert_eq!(crate::def::impl_closure(kind, a), crate::def::impl_closure(kind, same_a));
+            assert_ne!(crate::def::impl_closure(kind, &a), crate::def::impl_closure(kind, &b));
+            assert_eq!(crate::def::impl_closure(kind, &a), crate::def::impl_closure(kind, &same_a));
+        }
+    }
+    #[test]
+    fn stable_impl_identity_retains_full_keys_and_is_disjoint_from_legacy() {
+        let a = ClosureId {
+            name: 0,
+            stable_crate_id: 1,
+            order: 7,
+            stable_impl_key: Some(std::sync::Arc::new("001122".to_string())),
+        };
+        let same = ClosureId { name: 99, order: 100, ..a.clone() };
+        let other = ClosureId {
+            stable_impl_key: Some(std::sync::Arc::new("001123".to_string())),
+            ..a.clone()
+        };
+        let legacy = ClosureId { stable_impl_key: None, ..a.clone() };
+        let foreign = ClosureId { stable_crate_id: 2, ..a.clone() };
+        assert_eq!(a, same);
+        assert_eq!(hash_bytes(&a), hash_bytes(&same));
+        assert_ne!(hash_bytes(&a), hash_bytes(&other));
+        assert_ne!(a, other);
+        assert_ne!(a, legacy);
+        assert_ne!(a, foreign);
+        assert_eq!(a.identity_cmp(&same), std::cmp::Ordering::Equal);
+        for different in [&other, &legacy, &foreign] {
+            assert_ne!(
+                crate::def::prefix_closure_type(&a),
+                crate::def::prefix_closure_type(different)
+            );
+            for kind in [ClosureKind::Fn, ClosureKind::FnMut, ClosureKind::FnOnce] {
+                assert_ne!(
+                    crate::def::impl_closure(kind, &a),
+                    crate::def::impl_closure(kind, different)
+                );
+            }
         }
     }
 }

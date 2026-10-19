@@ -3,8 +3,22 @@ use crate::spans::FileStartEndPos;
 use crate::verifier::io_vir_err;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use vir::ast::{Krate, Mode, VirErr};
+
+// ClosureId and concrete trait naming must never be decoded as an old export.
+// Bump this fixed wire-policy version whenever identity/serialization changes.
+const EXPORT_FORMAT: &[u8] = b"VERUS-SAIL-IMPL-ID-02\0";
+
+fn read_export_header(reader: &mut impl Read) -> std::io::Result<()> {
+    let mut actual = [0u8; EXPORT_FORMAT.len()];
+    reader.read_exact(&mut actual)?;
+    if actual.as_slice() != EXPORT_FORMAT {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "export format mismatch"));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct CrateMetadata {
@@ -39,6 +53,11 @@ pub(crate) fn import_crates(
                 ));
             }
         });
+        if read_export_header(&mut file).is_err() {
+            return Err(crate::util::error(format!(
+                "incompatible or truncated imported library file `{file_path}` - rebuild vstd and all exports with this Verus runtime"
+            )));
+        }
         let CrateWithMetadata { krate, metadata } = match bincode_next::serde::decode_from_std_read(
             &mut file,
             bincode_next::config::legacy(),
@@ -90,6 +109,9 @@ pub(crate) fn export_crate(
                 ));
             }
         });
+        file.write_all(EXPORT_FORMAT).map_err(|err| {
+            io_vir_err(format!("could not write exported library header `{:?}`", file_path), err)
+        })?;
         let krate_with_metadata = CrateWithMetadata { krate: vir_crate, metadata: vir_metadata };
         bincode_next::serde::encode_into_std_write(
             &krate_with_metadata,
@@ -101,4 +123,67 @@ pub(crate) fn export_crate(
         //serde_json::to_writer_pretty(file, &vir_crate).expect("write crate to file");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_export() -> CrateWithMetadata {
+        CrateWithMetadata {
+            krate: Arc::new(vir::ast::KrateX {
+                functions: vec![],
+                reveal_groups: vec![],
+                datatypes: vec![],
+                traits: vec![],
+                trait_impls: vec![],
+                assoc_type_impls: vec![],
+                modules: vec![],
+                external_fns: vec![],
+                external_types: vec![],
+                path_as_rust_names: vec![],
+                opaque_types: vec![],
+                arch: vir::ast::Arch { word_bits: vir::ast::ArchWordBits::Either32Or64 },
+            }),
+            metadata: CrateMetadata { crate_id: 17, original_files: HashMap::new() },
+        }
+    }
+
+    #[test]
+    fn old_missing_mismatched_and_truncated_exports_refuse_before_decode() {
+        // A genuine old-format complete payload still decodes under the old
+        // bincode schema, but cannot pass the new format boundary.
+        let old =
+            bincode_next::serde::encode_to_vec(empty_export(), bincode_next::config::legacy())
+                .unwrap();
+        let (decoded, _): (CrateWithMetadata, _) =
+            bincode_next::serde::decode_from_slice(&old, bincode_next::config::legacy()).unwrap();
+        assert_eq!(decoded.metadata.crate_id, 17);
+        assert!(read_export_header(&mut &old[..]).is_err());
+        for length in 0..EXPORT_FORMAT.len() {
+            assert!(read_export_header(&mut &EXPORT_FORMAT[..length]).is_err());
+        }
+        let mut wrong = EXPORT_FORMAT.to_vec();
+        wrong[0] ^= 1;
+        assert!(read_export_header(&mut &wrong[..]).is_err());
+    }
+
+    #[test]
+    fn matching_format_round_trips_actual_crate_metadata() {
+        let mut bytes = EXPORT_FORMAT.to_vec();
+        bincode_next::serde::encode_into_std_write(
+            empty_export(),
+            &mut bytes,
+            bincode_next::config::legacy(),
+        )
+        .unwrap();
+        let mut reader = &bytes[..];
+        read_export_header(&mut reader).unwrap();
+        let decoded: CrateWithMetadata =
+            bincode_next::serde::decode_from_std_read(&mut reader, bincode_next::config::legacy())
+                .unwrap();
+        assert_eq!(decoded.metadata.crate_id, 17);
+        assert!(decoded.krate.functions.is_empty());
+        assert!(reader.is_empty());
+    }
 }
