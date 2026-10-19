@@ -200,6 +200,8 @@ the pinned commit; that is expected and does not affect the runtime source.
 | `855d5f79`, `a737c533` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
 | `e28c13b4`, `12a2bab8` | perf: stabilize spec formal solver names by position; fix: align spec termination proof parameters | VI-0023, proposed Sail ADR 0054 | Candidate positional names preserve imported caller axioms across a formal rename. Unselected; component measurements do not qualify the combined runtime. | Three spec-name VIR tests and five `sail_vi0023_spec_parameter_names` cases |
 | `216e2bda` | test: isolate spec parameter regression scratch directories | VI-0023 | Gives each regression case its own harness scratch name, including when exact cases run in separate concurrent processes. Assertions and runtime behavior are unchanged. | All five cases with four test threads and four separate-process workers |
+| `c7629a42` | fix: keep stock line numbers in the reporter's dbg fallback | (engine follow-up) | When Verus cannot resolve a label's span, it prints the stored span text with `dbg!`, whose `[file:line:col]` was `rust_verify/src/verifier.rs:117:17` in the fork and `:113:17` in stock. The fork prints stock's location again. | `.github/sail/check-dbg-locations.py` in CI: every upstream `dbg!` line stays at its upstream location |
+| `4d8ba7c3`, `c8106c43` | feat: remap imported VIR span-string prefixes on request; feat: accept several pairs | VI-0031 | Only with `SAIL_VIR_SPAN_REMAP` (one `<from>=<to>` pair per line, first matching prefix wins), which Sail sets when it serves prebuilt VIR: span strings of imported VIR starting with a pair's prefix start with its replacement, so a prebuilt vstd's standard library and registry source names read as a local build's. Without the variable nothing changes. | `sail_vir_span_remap` library test; `sail_vi0031_vir_span_remap` |
 
 The rebase onto `upstream/7d82994` rewrote every commit, so the shas above
 differ from those in Sail's records, the `pinned/<short sha>` tags and the
@@ -347,6 +349,12 @@ plain tests passing). This CI uses no
 macOS runners; Sail's release tooling builds and qualifies the macOS runtime
 natively. Actions are pinned by commit SHA (the repository requires it) and
 the workflow token is read-only.
+
+Before building, it checks that every `dbg!` line in the upstream base's
+sources (the newest `upstream/*` branch that is an ancestor) sits at the same
+`file:line` in the fork (`.github/sail/check-dbg-locations.py`), since
+`dbg!` prints its location and Verus reaches one in ordinary diagnostics. A
+rebase that moves one fails CI.
 
 Upstream's workflows under `.github/workflows/` are kept unchanged so rebases
 stay clean, but each is disabled in this repository, so none of them
