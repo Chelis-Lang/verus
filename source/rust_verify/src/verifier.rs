@@ -47,9 +47,6 @@ use vir::ast_util::{fun_as_friendly_rust_name, is_visible_to};
 use vir::def::{CommandContext, CommandsWithContext, CommandsWithContextX, SnapPos};
 use vir::prelude::PreludeConfig;
 
-#[path = "sail_engine.rs"]
-mod sail_engine;
-
 const RLIMIT_PER_SECOND_Z3: f32 = 3000000f32;
 const RLIMIT_PER_SECOND_CVC5: f32 = 333333f32; // ~= 5s
 
@@ -86,7 +83,6 @@ impl air::messages::Diagnostics for Reporter<'_> {
         sail_engine::diagnostic(msg, level);
         let msg: &MessageX =
             msg.downcast_ref().expect("unexpected value in Any -> Message conversion");
-
         let mut v: Vec<Span> = Vec::new();
         for sp in &msg.spans {
             if let Some(span) = self.spans.from_air_span(&sp, Some(self.source_map)) {
@@ -185,6 +181,12 @@ impl Diagnostics for Reporter<'_> {
         panic!("progress bars not supported in single-threaded Reporter");
     }
 }
+
+// Sail fork: declared below `Reporter::report_as`, and that function has no
+// blank line after its first statement, so the stock line numbers that its
+// `dbg!` fallback prints stay the same.
+#[path = "sail_engine.rs"]
+mod sail_engine;
 
 thread_local! {
     /// Sail fork (VI-0012): set by a parallel worker that has already reported
