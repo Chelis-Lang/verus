@@ -4,8 +4,9 @@
  * Based on pseudocode from
  * https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
  */
+use crate::sail_hash::{HashMap, HashSet};
 use std::cmp::min;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 
 type SccId = usize;
 type NodeIndex = usize;
@@ -59,14 +60,14 @@ impl SCC {
 impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
     pub fn new() -> Graph<T> {
         Graph {
-            h: HashMap::new(),
+            h: HashMap::default(),
             nodes: Vec::new(),
             has_run: false,
             stack: Vec::new(),
             stack_len: 0,
             index: 0,
             sccs: Vec::new(),
-            mapping: HashMap::new(),
+            mapping: HashMap::default(),
         }
     }
 
@@ -238,7 +239,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         assert!(self.h.contains_key(&t));
         let root: NodeIndex = *self.h.get(t).expect("key not present");
         let mut paths_at_depth: Vec<Vec<NodeIndex>> = vec![vec![root]];
-        let mut reached: HashSet<NodeIndex> = HashSet::new();
+        let mut reached: HashSet<NodeIndex> = HashSet::default();
         reached.insert(root);
         loop {
             let mut paths_at_next_depth: Vec<Vec<NodeIndex>> = Vec::new();
@@ -275,7 +276,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         let src = self.mapping[source];
         let tgt = self.mapping[target];
         let tgt_sort_index = sorted_order.map(|order| order[&self.get_scc_rep(target)]);
-        let mut reached: HashSet<SccId> = HashSet::new();
+        let mut reached: HashSet<SccId> = HashSet::default();
         let mut worklist: Vec<SccId> = vec![src];
         while let Some(scc) = worklist.pop() {
             if scc == tgt {

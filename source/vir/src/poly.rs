@@ -1427,11 +1427,11 @@ pub fn poly_krate_for_module(ctx: &mut Ctx, krate: &KrateSst) -> KrateSst {
         assoc_type_impls: assoc_type_impls.iter().map(|a| visit_assoc_type_impl(ctx, a)).collect(),
         reveal_groups: reveal_groups.clone(),
     };
-    ctx.func_sst_map = HashMap::new();
+    ctx.func_sst_map = Default::default();
     for function in kratex.functions.iter() {
         ctx.func_sst_map.insert(function.x.name.clone(), function.clone());
     }
-    ctx.datatype_map = HashMap::new();
+    ctx.datatype_map = Default::default();
     for datatype in kratex.datatypes.iter() {
         ctx.datatype_map.insert(datatype.x.name.clone(), datatype.clone());
     }

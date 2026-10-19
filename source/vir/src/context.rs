@@ -9,6 +9,7 @@ use crate::def::{FUEL_ID, NameCtxt};
 use crate::messages::{Span, WarningAllow, error};
 use crate::poly::MonoTyp;
 use crate::recursion::Node;
+use crate::sail_hash::{HashMap, HashSet};
 use crate::scc::Graph;
 use crate::sst::BndInfo;
 use crate::sst_to_air::fun_to_air_ident;
@@ -17,7 +18,6 @@ use air::ast_util::{mk_unnamed_axiom, str_typ};
 use air::context::SmtSolver;
 use num_bigint::BigUint;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::sync::Arc;
 
@@ -48,7 +48,7 @@ pub struct WarningCtx {
     // Map names of FunctionX in this crate (not imported from other crates)
     // to Some CheckAllowForWarning to be used to check that fun,
     // map names from other crates to None
-    pub fun_warn_configs: HashMap<Fun, Option<WarningConfig>>,
+    pub fun_warn_configs: std::collections::HashMap<Fun, Option<WarningConfig>>,
 }
 
 /// Context for across all modules
@@ -69,7 +69,7 @@ pub struct GlobalCtx {
     pub(crate) extension_to_trait: HashMap<Path, Path>,
     pub(crate) warning_ctx: Arc<WarningCtx>,
     /// Connects quantifier identifiers to the original expression
-    pub qid_map: RefCell<HashMap<String, BndInfo>>,
+    pub qid_map: RefCell<std::collections::HashMap<String, BndInfo>>,
     pub(crate) rlimit: f32,
     pub(crate) interpreter_log: Arc<std::sync::Mutex<Option<File>>>,
     pub(crate) func_call_graph_log: Arc<std::sync::Mutex<Option<FuncCallGraphLogFiles>>>,
@@ -208,9 +208,9 @@ fn datatypes_invs(
     datatypes: &Vec<Datatype>,
 ) -> HashSet<Dt> {
     let mut back_pointers: HashMap<Dt, HashSet<Dt>> =
-        datatypes.iter().map(|d| (d.x.name.clone(), HashSet::new())).collect();
-    let mut has_inv: HashSet<Dt> = HashSet::new();
-    let mut roots: HashSet<Dt> = HashSet::new();
+        datatypes.iter().map(|d| (d.x.name.clone(), HashSet::default())).collect();
+    let mut has_inv: HashSet<Dt> = HashSet::default();
+    let mut roots: HashSet<Dt> = HashSet::default();
     for datatype in datatypes {
         if is_datatype_transparent(module, datatype) {
             let container_name = &datatype.x.name;
@@ -338,28 +338,28 @@ impl GlobalCtx {
                 Dt::Tuple(_) => None,
             })
             .collect();
-        let mut func_map: HashMap<Fun, Function> = HashMap::new();
+        let mut func_map: HashMap<Fun, Function> = HashMap::default();
         for function in krate.functions.iter() {
             assert!(!func_map.contains_key(&function.x.name));
             func_map.insert(function.x.name.clone(), function.clone());
         }
-        let mut fun_bounds: HashMap<Fun, GenericBounds> = HashMap::new();
-        let mut fun_attrs: HashMap<Fun, FunctionAttrs> = HashMap::new();
+        let mut fun_bounds: HashMap<Fun, GenericBounds> = HashMap::default();
+        let mut fun_attrs: HashMap<Fun, FunctionAttrs> = HashMap::default();
         let reveal_group_set: HashSet<Fun> =
             krate.reveal_groups.iter().map(|g| g.x.name.clone()).collect();
 
-        let mut trait_map: HashMap<Path, Trait> = HashMap::new();
+        let mut trait_map: HashMap<Path, Trait> = HashMap::default();
         for tr in krate.traits.iter() {
             assert!(!trait_map.contains_key(&tr.x.name));
             trait_map.insert(tr.x.name.clone(), tr.clone());
         }
 
         use crate::ast::TraitImpl;
-        let mut extension_to_trait: HashMap<Path, Path> = HashMap::new();
-        let mut trait_impl_to_extensions: HashMap<Path, Vec<Path>> = HashMap::new();
-        let mut trait_impl_from_extension: HashMap<Path, Path> = HashMap::new();
-        let mut trait_impl_map: HashMap<Path, TraitImpl> = HashMap::new();
-        let mut replace_with: HashMap<Node, Node> = HashMap::new();
+        let mut extension_to_trait: HashMap<Path, Path> = HashMap::default();
+        let mut trait_impl_to_extensions: HashMap<Path, Vec<Path>> = HashMap::default();
+        let mut trait_impl_from_extension: HashMap<Path, Path> = HashMap::default();
+        let mut trait_impl_map: HashMap<Path, TraitImpl> = HashMap::default();
+        let mut replace_with: HashMap<Node, Node> = HashMap::default();
         for t in &krate.traits {
             // If TSpec extends T with spec functions, merge TSpec into T
             if let Some((extension, _)) = &t.x.external_trait_extension {
@@ -486,9 +486,9 @@ impl GlobalCtx {
         }
 
         // map (method, impl) to impl Fun
-        let mut trait_impl_map: HashMap<(Fun, Path), Fun> = HashMap::new();
+        let mut trait_impl_map: HashMap<(Fun, Path), Fun> = HashMap::default();
         // map impl Fun to impl
-        let mut method_impl_map: HashMap<Fun, Path> = HashMap::new();
+        let mut method_impl_map: HashMap<Fun, Path> = HashMap::default();
         for f in &krate.functions {
             if let crate::ast::FunctionKind::TraitMethodImpl { method, impl_path, .. } = &f.x.kind {
                 let key = (method.clone(), impl_path.clone());
@@ -721,7 +721,7 @@ impl GlobalCtx {
                 }
             }
         }
-        let qid_map = RefCell::new(HashMap::new());
+        let qid_map = RefCell::new(std::collections::HashMap::new());
 
         let datatype_graph = crate::recursive_types::build_datatype_graph(krate, &mut span_infos);
 
@@ -756,7 +756,7 @@ impl GlobalCtx {
     pub fn from_self_with_log(&self, interpreter_log: Arc<std::sync::Mutex<Option<File>>>) -> Self {
         let chosen_triggers: std::cell::RefCell<Vec<ChosenTriggers>> =
             std::cell::RefCell::new(Vec::new());
-        let qid_map = RefCell::new(HashMap::new());
+        let qid_map = RefCell::new(std::collections::HashMap::new());
 
         GlobalCtx {
             smt_aliases: self.smt_aliases.clone(),
@@ -818,7 +818,7 @@ impl Ctx {
         debug: bool,
     ) -> Result<Self, VirErr> {
         let name_ctxt = NameCtxt::new(global.smt_aliases.clone());
-        let mut datatype_is_transparent: HashMap<Dt, bool> = HashMap::new();
+        let mut datatype_is_transparent: HashMap<Dt, bool> = HashMap::default();
         for datatype in krate.datatypes.iter() {
             datatype_is_transparent
                 .insert(datatype.x.name.clone(), is_datatype_transparent(&module.x.path, datatype));
@@ -826,24 +826,24 @@ impl Ctx {
         let datatypes_with_invariant =
             datatypes_invs(&module.x.path, &datatype_is_transparent, &krate.datatypes);
         let mut functions: Vec<Function> = Vec::new();
-        let mut func_map: HashMap<Fun, Function> = HashMap::new();
-        let mut fun_ident_map: HashMap<Ident, Fun> = HashMap::new();
-        let funcs_with_ensure_predicate: HashMap<Fun, bool> = HashMap::new();
+        let mut func_map: HashMap<Fun, Function> = HashMap::default();
+        let mut fun_ident_map: HashMap<Ident, Fun> = HashMap::default();
+        let funcs_with_ensure_predicate: HashMap<Fun, bool> = HashMap::default();
         for function in krate.functions.iter() {
             func_map.insert(function.x.name.clone(), function.clone());
             fun_ident_map
                 .insert(fun_to_air_ident(&name_ctxt, &function.x.name), function.x.name.clone());
             functions.push(function.clone());
         }
-        let mut datatype_map: HashMap<Dt, Datatype> = HashMap::new();
+        let mut datatype_map: HashMap<Dt, Datatype> = HashMap::default();
         for datatype in krate.datatypes.iter() {
             datatype_map.insert(datatype.x.name.clone(), datatype.clone());
         }
-        let mut trait_map: HashMap<Path, Trait> = HashMap::new();
+        let mut trait_map: HashMap<Path, Trait> = HashMap::default();
         for tr in krate.traits.iter() {
             trait_map.insert(tr.x.name.clone(), tr.clone());
         }
-        let mut impl_map: HashMap<Path, TraitImpl> = HashMap::new();
+        let mut impl_map: HashMap<Path, TraitImpl> = HashMap::default();
         for ti in krate.trait_impls.iter() {
             impl_map.insert(ti.x.impl_path.clone(), ti.clone());
         }
@@ -851,15 +851,15 @@ impl Ctx {
             krate.reveal_groups.iter().map(|g| g.x.name.clone()).collect();
         fun_ident_map
             .extend(reveal_group_set.iter().map(|g| (fun_to_air_ident(&name_ctxt, &g), g.clone())));
-        let quantifier_count = RefCell::new(HashMap::new());
-        let string_hashes = RefCell::new(HashMap::new());
-        let byte_string_hashes = RefCell::new(HashMap::new());
+        let quantifier_count = RefCell::new(HashMap::default());
+        let string_hashes = RefCell::new(HashMap::default());
+        let byte_string_hashes = RefCell::new(HashMap::default());
 
-        let mut fndef_type_set = HashSet::new();
+        let mut fndef_type_set = HashSet::default();
         for fndef_type in fndef_types.iter() {
             fndef_type_set.insert(fndef_type.clone());
         }
-        let mut opaque_type_map: HashMap<Path, OpaqueType> = HashMap::new();
+        let mut opaque_type_map: HashMap<Path, OpaqueType> = HashMap::default();
         for opaque_type in krate.opaque_types.iter() {
             opaque_type_map.insert(opaque_type.x.name.clone(), opaque_type.clone());
         }
@@ -877,7 +877,7 @@ impl Ctx {
             fndef_type_set,
             functions,
             func_map,
-            func_sst_map: HashMap::new(),
+            func_sst_map: HashMap::default(),
             fun_ident_map,
             reveal_groups: krate.reveal_groups.clone(),
             reveal_group_set,

@@ -9,10 +9,10 @@ use std::{
     fs::File,
 };
 
-pub fn write_instantiation_graph(
+pub fn write_instantiation_graph<S: std::hash::BuildHasher>(
     bucket_id: &BucketId,
     op: Option<&Op>,
-    func_map: &HashMap<Fun, vir::ast::Function>,
+    func_map: &HashMap<Fun, vir::ast::Function, S>,
     instantiation_graph: &air::profiler::InstantiationGraph,
     qid_map: &HashMap<String, vir::sst::BndInfo>,
     profile_file_name: std::path::PathBuf,

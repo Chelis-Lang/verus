@@ -124,8 +124,8 @@ pub(crate) fn err_for_trait_ensures(span: &Span, fun: &Fun) -> VirErr {
     );
 }
 
-pub(crate) fn is_decl_in_safe_public_trait(
-    trait_map: &HashMap<Path, Trait>,
+pub(crate) fn is_decl_in_safe_public_trait<S: std::hash::BuildHasher>(
+    trait_map: &HashMap<Path, Trait, S>,
     function: &Function,
 ) -> bool {
     if let FunctionKind::TraitMethodDecl { trait_path, has_default: _ } = &function.x.kind {

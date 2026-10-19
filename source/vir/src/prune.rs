@@ -16,8 +16,8 @@ use crate::datatype_to_air::is_datatype_transparent;
 use crate::def::*;
 use crate::poly::MonoTyp;
 use crate::resolve_axioms::{ResolvableType, ResolvedTypeCollection};
+use crate::sail_hash::{HashMap, HashSet};
 use air::scope_map::ScopeMap;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
@@ -774,7 +774,7 @@ fn overapproximate_revealed_functions(
     // So we just make an overapproximation.
     // (As a result, we might unnecessarily include the body of an opaque function even if
     // we only need the opaque function's signature.)
-    let mut reveal_group_map: HashMap<Fun, RevealGroup> = HashMap::new();
+    let mut reveal_group_map: HashMap<Fun, RevealGroup> = HashMap::default();
     for f in reveal_groups {
         reveal_group_map.insert(f.x.name.clone(), f.clone());
     }
@@ -836,9 +836,9 @@ fn collect_broadcast_triggers(
     let mut trigs: Vec<(Vec<Fun>, Vec<ReachedType>)> = Vec::new();
     for trig in &with_triggers {
         use std::cell::RefCell;
-        let mut call_set: HashSet<Fun> = HashSet::new();
+        let mut call_set: HashSet<Fun> = HashSet::default();
         let mut calls: Vec<Fun> = Vec::new();
-        let mut typ_set: HashSet<ReachedType> = HashSet::new();
+        let mut typ_set: HashSet<ReachedType> = HashSet::default();
         let mut typs: Vec<ReachedType> = Vec::new();
         let inline_call_worklist: RefCell<Vec<Function>> = RefCell::new(Vec::new());
         typ_set.insert(ReachedType::None);
@@ -940,8 +940,8 @@ pub fn prune_krate_for_module_or_krate(
 ) -> (Krate, PruneInfo) {
     assert!(module.is_some() != current_crate.is_some());
 
-    let mut root_modules: HashSet<Path> = HashSet::new();
-    let mut root_functions: HashSet<Fun> = HashSet::new();
+    let mut root_modules: HashSet<Path> = HashSet::default();
+    let mut root_functions: HashSet<Fun> = HashSet::default();
     if let Some(module) = &module {
         root_modules.insert(module.clone());
         if let Some(fun) = fun {
@@ -971,7 +971,7 @@ pub fn prune_krate_for_module_or_krate(
 
     let mut state: State = Default::default();
     if collect_monotyps {
-        state.mono_abstract_datatypes = Some(HashSet::new());
+        state.mono_abstract_datatypes = Some(HashSet::default());
     }
     if collect_resolve_typs {
         state.resolve_typs = Some(ResolvedTypeCollection::new(module.as_ref().unwrap(), &krate));
@@ -1031,7 +1031,7 @@ pub fn prune_krate_for_module_or_krate(
     }
 
     // Collect all functions that our module reveals:
-    let mut revealed_functions: HashSet<Fun> = HashSet::new();
+    let mut revealed_functions: HashSet<Fun> = HashSet::default();
     let mut assert_by_compute = false;
     for f in &krate.functions {
         if is_root_function(f) {
@@ -1170,19 +1170,19 @@ pub fn prune_krate_for_module_or_krate(
         opaque_types.push(op.clone());
     }
 
-    let mut function_map: HashMap<Fun, Function> = HashMap::new();
-    let mut reveal_group_map: HashMap<Fun, RevealGroup> = HashMap::new();
-    let mut datatype_map: HashMap<Dt, Datatype> = HashMap::new();
-    let mut opaque_ty_map: HashMap<OpaqueTyName, OpaqueType> = HashMap::new();
-    let mut trait_map: HashMap<Path, Trait> = HashMap::new();
-    let mut assoc_type_impl_map: HashMap<AssocTypeGroup, Vec<AssocTypeImpl>> = HashMap::new();
-    let mut trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>> = HashMap::new();
-    let mut typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>> = HashMap::new();
-    let mut trait_impl_map: HashMap<ImplName, ReachTraitImpl> = HashMap::new();
-    let mut method_map: HashMap<(ReachedType, Fun), Vec<Fun>> = HashMap::new();
-    let mut fun_to_trigger_broadcasts: HashMap<Fun, Vec<Fun>> = HashMap::new();
-    let mut typ_to_trigger_broadcasts: HashMap<ReachedType, Vec<Fun>> = HashMap::new();
-    let mut fun_revealed_broadcast_map: HashMap<Fun, ReachBroadcastFunction> = HashMap::new();
+    let mut function_map: HashMap<Fun, Function> = HashMap::default();
+    let mut reveal_group_map: HashMap<Fun, RevealGroup> = HashMap::default();
+    let mut datatype_map: HashMap<Dt, Datatype> = HashMap::default();
+    let mut opaque_ty_map: HashMap<OpaqueTyName, OpaqueType> = HashMap::default();
+    let mut trait_map: HashMap<Path, Trait> = HashMap::default();
+    let mut assoc_type_impl_map: HashMap<AssocTypeGroup, Vec<AssocTypeImpl>> = HashMap::default();
+    let mut trait_to_trait_impls: HashMap<TraitName, Vec<ImplName>> = HashMap::default();
+    let mut typ_to_trait_impls: HashMap<ReachedType, Vec<ImplName>> = HashMap::default();
+    let mut trait_impl_map: HashMap<ImplName, ReachTraitImpl> = HashMap::default();
+    let mut method_map: HashMap<(ReachedType, Fun), Vec<Fun>> = HashMap::default();
+    let mut fun_to_trigger_broadcasts: HashMap<Fun, Vec<Fun>> = HashMap::default();
+    let mut typ_to_trigger_broadcasts: HashMap<ReachedType, Vec<Fun>> = HashMap::default();
+    let mut fun_revealed_broadcast_map: HashMap<Fun, ReachBroadcastFunction> = HashMap::default();
     let mut assert_by_compute_seq_funs: Vec<Fun> = Vec::new();
     for f in &functions {
         function_map.insert(f.x.name.clone(), f.clone());
