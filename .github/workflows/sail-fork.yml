@@ -31,6 +31,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      # dbg! prints its file:line, and Verus reaches some in diagnostics, so
+      # the fork must not move upstream's (SAIL.md).
+      - name: dbg! locations match the upstream base
+        run: |
+          git fetch --no-tags origin '+refs/heads/upstream/*:refs/remotes/origin/upstream/*'
+          python3 .github/sail/check-dbg-locations.py
 
       # Installs exactly what rust-toolchain.toml lists (including rustc-dev).
       - name: install the pinned Rust toolchain
