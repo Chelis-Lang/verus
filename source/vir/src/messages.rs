@@ -25,14 +25,14 @@ pub struct Span {
 // Sail: a prefix rewrite of the span strings of VIR being imported, see
 // `with_imported_span_remap`.
 std::thread_local! {
-    static IMPORTED_SPAN_REMAP: std::cell::RefCell<Option<(String, String)>> =
-        const { std::cell::RefCell::new(None) };
+    static IMPORTED_SPAN_REMAP: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Sail: runs `f` (an import of exported VIR) so that every deserialized span
-/// string starting with `remap.0` starts with `remap.1` instead. Without a
-/// remap, deserialization is unchanged.
-pub fn with_imported_span_remap<T>(remap: Option<(String, String)>, f: impl FnOnce() -> T) -> T {
+/// string starting with a pair's first prefix starts with its second instead.
+/// The first matching pair wins. Without pairs, deserialization is unchanged.
+pub fn with_imported_span_remap<T>(remap: Vec<(String, String)>, f: impl FnOnce() -> T) -> T {
     let previous = IMPORTED_SPAN_REMAP.with(|r| r.replace(remap));
     let result = f();
     IMPORTED_SPAN_REMAP.with(|r| r.replace(previous));
@@ -41,9 +41,11 @@ pub fn with_imported_span_remap<T>(remap: Option<(String, String)>, f: impl FnOn
 
 fn deserialize_span_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     let s = String::deserialize(d)?;
-    Ok(IMPORTED_SPAN_REMAP.with(|r| match &*r.borrow() {
-        Some((from, to)) if s.starts_with(from.as_str()) => format!("{to}{}", &s[from.len()..]),
-        _ => s,
+    Ok(IMPORTED_SPAN_REMAP.with(|r| {
+        match r.borrow().iter().find(|(from, _)| s.starts_with(from.as_str())) {
+            Some((from, to)) => format!("{to}{}", &s[from.len()..]),
+            None => s,
+        }
     }))
 }
 

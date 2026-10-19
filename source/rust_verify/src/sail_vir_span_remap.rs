@@ -9,21 +9,43 @@
 //! with the virtual names (Sail VI-0031); for a user whose toolchain has
 //! `rust-src`, a vstd compiled on that machine would hold the local names.
 //!
-//! `SAIL_VIR_SPAN_REMAP=<from>=<to>` makes the import rewrite every span string
-//! of imported VIR that starts with `<from>` to start with `<to>`. Sail sets
-//! `/rustc/<rustc commit>/=<sysroot>/lib/rustlib/src/rust/`, rustc's own
-//! translation, only when it serves a prebuilt vstd to such a toolchain.
-//! Without the variable nothing changes.
+//! The same holds for the prebuilt crates' own registry sources, which Sail
+//! records under rustc's virtual rustc-dev base (Sail ADR 0048) where a local
+//! build names the user's registry directory.
+//!
+//! `SAIL_VIR_SPAN_REMAP` holds one `<from>=<to>` pair per line. The import
+//! rewrites every span string of imported VIR that starts with a pair's
+//! `<from>` to start with its `<to>` instead; pairs are tried in order and the
+//! first match wins. Sail sets the pairs only when it serves prebuilt VIR:
+//! `/rustc/<rustc commit>/=<sysroot>/lib/rustlib/src/rust/` (rustc's own
+//! translation) when the toolchain has `rust-src`, and the rustc-dev base of
+//! the registry sources to the user's registry directory. Each prefix must be
+//! an absolute path; a malformed line selects nothing at all. Without the
+//! variable nothing changes.
 
-/// The variable naming the recorded prefix and its replacement, as
-/// `<from>=<to>`.
+/// The variable naming the recorded prefixes and their replacements, one
+/// `<from>=<to>` pair per line.
 pub const ENV: &str = "SAIL_VIR_SPAN_REMAP";
 
-/// The selected remap: both prefixes absolute paths, split at the first `=`.
-pub(crate) fn remap() -> Option<(String, String)> {
-    let value = std::env::var_os(ENV)?;
-    let (from, to) = value.to_str()?.split_once('=')?;
-    (from.starts_with('/') && to.starts_with('/')).then(|| (from.to_owned(), to.to_owned()))
+/// The selected pairs, in order: each split at its first `=`, both prefixes
+/// absolute paths. Any malformed line, or a non-UTF-8 value, selects none.
+pub(crate) fn remap() -> Vec<(String, String)> {
+    let Some(value) = std::env::var_os(ENV) else {
+        return Vec::new();
+    };
+    let Some(value) = value.to_str() else {
+        return Vec::new();
+    };
+    let mut pairs = Vec::new();
+    for line in value.lines() {
+        match line.split_once('=') {
+            Some((from, to)) if from.starts_with('/') && to.starts_with('/') => {
+                pairs.push((from.to_owned(), to.to_owned()))
+            }
+            _ => return Vec::new(),
+        }
+    }
+    pairs
 }
 
 #[cfg(test)]
@@ -69,8 +91,21 @@ mod tests {
             assert_eq!(imported(other), other);
         });
         with_env(None, || assert_eq!(imported(std_span), std_span));
+        // Several pairs: each applies to its own prefix, the first match wins.
+        let registry = "/rustc-dev/0123/vstd-1/src/seq.rs:5:1: 5:9 (#0)";
+        let pairs = "/rustc/0123/=/sysroot/lib/rustlib/src/rust/\n\
+                     /rustc-dev/0123/=/home/user/.cargo/registry/src/index/\n\
+                     /rustc/=/never/";
+        with_env(Some(pairs), || {
+            assert_eq!(imported(std_span), local);
+            assert_eq!(imported(registry), "/home/user/.cargo/registry/src/index/vstd-1/src/seq.rs:5:1: 5:9 (#0)");
+            assert_eq!(imported(other), other);
+        });
         // Malformed or relative values select nothing.
         with_env(Some("rustc/0123/=/sysroot/"), || assert_eq!(imported(std_span), std_span));
         with_env(Some("/rustc/0123/"), || assert_eq!(imported(std_span), std_span));
+        with_env(Some("/rustc/0123/=/sysroot/\nrelative=/x/"), || {
+            assert_eq!(imported(std_span), std_span)
+        });
     }
 }
