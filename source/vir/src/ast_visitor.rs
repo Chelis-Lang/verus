@@ -1896,6 +1896,17 @@ where
     }
 }
 
+/// Sail fork (#244): the number of expressions in a function's specification
+/// and body, a deterministic size used only to order bucket dispatch.
+pub fn sail_function_expr_count(function: &Function) -> u64 {
+    let mut count: u64 = 0;
+    let _ = function_visitor_check::<(), _>(function, &mut |_| {
+        count = count.saturating_add(1);
+        Ok(())
+    });
+    count
+}
+
 struct MapExprStmtTypVisitor<'a, E, FE, FS, FT, FPL, FP> {
     env: &'a mut E,
     fe: &'a FE,

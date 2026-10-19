@@ -192,6 +192,14 @@ thread_local! {
     static SAIL_BUCKET_START_REPORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Sail fork (#244, VI-0012): which buckets parallel workers have taken, and
+/// the reporters used to send their start notes in bucket order.
+struct SailStartNotes {
+    taken: Vec<bool>,
+    next: usize,
+    reporters: Vec<(BucketId, QueuedReporter)>,
+}
+
 /// A reporter message that is being collected by the main thread
 pub(crate) enum ReporterMessage {
     ReportLongRunning(CommandContext),
@@ -2247,8 +2255,31 @@ impl Verifier {
                 messages.push((false, Vec::new()));
             }
 
+            // Sail fork (#244): take the buckets estimated to be most expensive
+            // first (ties in bucket order), so a long bucket queued last does
+            // not run alone at the end. Each bucket keeps its index, so its
+            // queries, its diagnostics' order (VI-0007) and its start note's
+            // order (VI-0012, below) are unchanged.
+            let costs = {
+                let buckets: Vec<_> =
+                    bucket_ids.iter().map(|b| (b.clone(), self.get_bucket(b))).collect();
+                crate::buckets::estimated_costs(&krate, &buckets)
+            };
+            let mut tasks: Vec<_> = tasks.into_iter().collect();
+            tasks.sort_by_key(|(i, ..)| (std::cmp::Reverse(costs[*i]), *i));
+            let tasks: VecDeque<_> = tasks.into_iter().collect();
+            let start_notes = SailStartNotes {
+                taken: vec![false; bucket_ids.len()],
+                next: 0,
+                reporters: bucket_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, b)| (b.clone(), QueuedReporter::new(i, sender.clone())))
+                    .collect(),
+            };
+
             // protect the taskq with a mutex
-            let taskq = std::sync::Arc::new(std::sync::Mutex::new(tasks));
+            let taskq = std::sync::Arc::new(std::sync::Mutex::new((tasks, start_notes)));
 
             // create the worker threads
             let mut workers = Vec::new();
@@ -2267,11 +2298,20 @@ impl Verifier {
                         loop {
                             let elm = {
                                 let mut tq = thread_taskq.lock().unwrap();
-                                let elm = tq.pop_front();
-                                // Sail fork (VI-0012): send the bucket's start note
-                                // before releasing the queue, so notes are in bucket order.
-                                if let Some((_, bucket_id, _, reporter)) = &elm {
-                                    thread_verifier.report_bucket_start(reporter, bucket_id);
+                                let (tasks, notes) = &mut *tq;
+                                let elm = tasks.pop_front();
+                                // Sail fork (VI-0012): send start notes before releasing
+                                // the queue, so notes are in bucket order. With #244's
+                                // dispatch order, a bucket's note waits until every
+                                // lower-numbered bucket has been taken too.
+                                if let Some((i, ..)) = &elm {
+                                    notes.taken[*i] = true;
+                                    while notes.next < notes.taken.len() && notes.taken[notes.next]
+                                    {
+                                        let (bucket_id, reporter) = &notes.reporters[notes.next];
+                                        thread_verifier.report_bucket_start(reporter, bucket_id);
+                                        notes.next += 1;
+                                    }
                                     SAIL_BUCKET_START_REPORTED.with(|reported| reported.set(true));
                                 }
                                 drop(tq);
