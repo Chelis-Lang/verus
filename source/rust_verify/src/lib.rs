@@ -67,6 +67,7 @@ pub mod rust_to_vir_trait;
 mod sail_compiler_inputs;
 mod sail_native_inputs;
 pub mod sail_source_base;
+pub mod sail_vir_span_remap;
 #[cfg(feature = "singular")]
 pub mod singular;
 mod spans;

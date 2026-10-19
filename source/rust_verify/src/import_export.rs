@@ -39,10 +39,12 @@ pub(crate) fn import_crates(
                 ));
             }
         });
-        let CrateWithMetadata { krate, metadata } = match bincode_next::serde::decode_from_std_read(
-            &mut file,
-            bincode_next::config::legacy(),
-        ) {
+        // Sail: optionally rename recorded span strings (`sail_vir_span_remap`).
+        let decoded = vir::messages::with_imported_span_remap(
+            crate::sail_vir_span_remap::remap(),
+            || bincode_next::serde::decode_from_std_read(&mut file, bincode_next::config::legacy()),
+        );
+        let CrateWithMetadata { krate, metadata } = match decoded {
             Ok(crate_with_metadata) => crate_with_metadata,
             Err(_e) => {
                 return Err(crate::util::error(format!(

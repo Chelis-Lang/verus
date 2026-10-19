@@ -1,0 +1,76 @@
+//! Sail: span strings of a prebuilt crate's VIR as a local build records them.
+//!
+//! Verus records each span's text (`Span::as_string`) in the VIR it exports.
+//! A standard library span reads `/rustc/<rustc commit>/library/...` when the
+//! exporting toolchain has no `rust-src` component, and
+//! `<sysroot>/lib/rustlib/src/rust/library/...` when it has one, because rustc
+//! then translates the virtual path to the local copy. Verus prints the stored
+//! text where it cannot resolve an imported span. Sail ships vstd prebuilt
+//! with the virtual names (Sail VI-0031); for a user whose toolchain has
+//! `rust-src`, a vstd compiled on that machine would hold the local names.
+//!
+//! `SAIL_VIR_SPAN_REMAP=<from>=<to>` makes the import rewrite every span string
+//! of imported VIR that starts with `<from>` to start with `<to>`. Sail sets
+//! `/rustc/<rustc commit>/=<sysroot>/lib/rustlib/src/rust/`, rustc's own
+//! translation, only when it serves a prebuilt vstd to such a toolchain.
+//! Without the variable nothing changes.
+
+/// The variable naming the recorded prefix and its replacement, as
+/// `<from>=<to>`.
+pub const ENV: &str = "SAIL_VIR_SPAN_REMAP";
+
+/// The selected remap: both prefixes absolute paths, split at the first `=`.
+pub(crate) fn remap() -> Option<(String, String)> {
+    let value = std::env::var_os(ENV)?;
+    let (from, to) = value.to_str()?.split_once('=')?;
+    (from.starts_with('/') && to.starts_with('/')).then(|| (from.to_owned(), to.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        // SAFETY: library tests that touch this variable run in this one test.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(ENV, value),
+                None => std::env::remove_var(ENV),
+            }
+        }
+        let result = f();
+        unsafe { std::env::remove_var(ENV) };
+        result
+    }
+
+    fn imported(span: &str) -> String {
+        let original = vir::messages::Span {
+            raw_span: std::sync::Arc::new(()),
+            id: 0,
+            data: vec![1, 2],
+            as_string: span.to_owned(),
+        };
+        let config = bincode_next::config::legacy();
+        let bytes = bincode_next::serde::encode_to_vec(&original, config).unwrap();
+        let decoded: vir::messages::Span = vir::messages::with_imported_span_remap(remap(), || {
+            bincode_next::serde::decode_from_slice(&bytes, config).unwrap().0
+        });
+        assert_eq!(decoded.data, vec![1, 2]);
+        decoded.as_string
+    }
+
+    #[test]
+    fn imported_span_strings_change_prefix_only_when_selected() {
+        let std_span = "/rustc/0123/library/core/src/marker.rs:1025:10: 1025:17 (#0)";
+        let local = "/sysroot/lib/rustlib/src/rust/library/core/src/marker.rs:1025:10: 1025:17 (#0)";
+        let other = "/home/user/src/lib.rs:3:1: 3:9 (#0)";
+        with_env(Some("/rustc/0123/=/sysroot/lib/rustlib/src/rust/"), || {
+            assert_eq!(imported(std_span), local);
+            assert_eq!(imported(other), other);
+        });
+        with_env(None, || assert_eq!(imported(std_span), std_span));
+        // Malformed or relative values select nothing.
+        with_env(Some("rustc/0123/=/sysroot/"), || assert_eq!(imported(std_span), std_span));
+        with_env(Some("/rustc/0123/"), || assert_eq!(imported(std_span), std_span));
+    }
+}

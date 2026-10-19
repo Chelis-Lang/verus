@@ -18,7 +18,33 @@ pub struct Span {
     pub raw_span: RawSpan,
     pub id: AstId, // arbitrary integer identifier that may be set and used in any way (e.g. as unique id, or just left as 0)
     pub data: Vec<u64>, // arbitrary integers (e.g. for serialization/deserialization)
+    #[serde(deserialize_with = "crate::messages::deserialize_span_string")]
     pub as_string: String, // if we can't print (description, raw_span), print as_string instead
+}
+
+// Sail: a prefix rewrite of the span strings of VIR being imported, see
+// `with_imported_span_remap`.
+std::thread_local! {
+    static IMPORTED_SPAN_REMAP: std::cell::RefCell<Option<(String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Sail: runs `f` (an import of exported VIR) so that every deserialized span
+/// string starting with `remap.0` starts with `remap.1` instead. Without a
+/// remap, deserialization is unchanged.
+pub fn with_imported_span_remap<T>(remap: Option<(String, String)>, f: impl FnOnce() -> T) -> T {
+    let previous = IMPORTED_SPAN_REMAP.with(|r| r.replace(remap));
+    let result = f();
+    IMPORTED_SPAN_REMAP.with(|r| r.replace(previous));
+    result
+}
+
+fn deserialize_span_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let s = String::deserialize(d)?;
+    Ok(IMPORTED_SPAN_REMAP.with(|r| match &*r.borrow() {
+        Some((from, to)) if s.starts_with(from.as_str()) => format!("{to}{}", &s[from.len()..]),
+        _ => s,
+    }))
 }
 
 impl std::fmt::Debug for Span {
