@@ -26,7 +26,7 @@ static OBSERVER_OWNED:AtomicU64=AtomicU64::new(0);
 static EMITTER:std::sync::Mutex<()>=std::sync::Mutex::new(());
 struct ObserverOwner {bytes:u64}
 impl ObserverOwner {
-    fn acquire()->Option<Self>{const BYTES:u64=24*1024;OBSERVER_OWNED.fetch_update(Ordering::Relaxed,Ordering::Relaxed,|old|old.checked_add(BYTES).filter(|next|*next<=OBSERVER_OWNERS as u64)).ok()?;Some(Self {bytes:BYTES})}
+    fn acquire()->Option<Self>{const BYTES:u64=24*1024;OBSERVER_OWNED.try_update(Ordering::Relaxed,Ordering::Relaxed,|old|old.checked_add(BYTES).filter(|next|*next<=OBSERVER_OWNERS as u64)).ok()?;Some(Self {bytes:BYTES})}
 }
 impl Drop for ObserverOwner {fn drop(&mut self){OBSERVER_OWNED.fetch_sub(self.bytes,Ordering::Relaxed);}}
 pub(super) struct Progress {identity:Option<String>,_owner:ObserverOwner}
@@ -175,7 +175,7 @@ fn message_x_charge(msg:&MessageX)->Option<u64>{
 }
 fn admit_message(msg:&ArcDynMessage)->Option<u64>{
     let charge=message_charge(msg)?;
-    REPORT_BYTES.fetch_update(Ordering::Relaxed,Ordering::Relaxed,|used|used.checked_add(charge).filter(|used|*used<=16*1024*1024)).ok()?;
+    REPORT_BYTES.try_update(Ordering::Relaxed,Ordering::Relaxed,|used|used.checked_add(charge).filter(|used|*used<=16*1024*1024)).ok()?;
     Some(charge)
 }
 #[derive(Default)]
@@ -305,7 +305,7 @@ impl Verifier {
             drop(FocusReporter{messages,charge:Cell::new(LIMIT),incomplete:Cell::new(false)});
         });
         started_rx.recv().unwrap();
-        assert!(REPORT_BYTES.fetch_update(Ordering::SeqCst,Ordering::SeqCst,|used|used.checked_add(1).filter(|total|*total<=LIMIT)).is_err(),"admitted new diagnostic while old nested span allocation is still live");
+        assert!(REPORT_BYTES.try_update(Ordering::SeqCst,Ordering::SeqCst,|used|used.checked_add(1).filter(|total|*total<=LIMIT)).is_err(),"admitted new diagnostic while old nested span allocation is still live");
         finish_tx.send(()).unwrap();worker.join().unwrap();
         assert_eq!(REPORT_BYTES.load(Ordering::SeqCst),0);
     }
