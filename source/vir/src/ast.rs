@@ -1095,25 +1095,34 @@ pub struct CtorUpdateTail {
 /// Identity of an anonymous closure type.
 ///
 /// Sail fork (VI-0019): `stable_crate_id` and `name` retain both halves of
-/// rustc's `DefPathHash`. The pair is used in the closure's SMT names
-/// (`anonymous_closure%<crate>_<name>`, `impl_closure&%<kind><crate>_<name>`).
-/// The local half depends on the closure's definition path (enclosing items
-/// and per-parent disambiguators). Rustc checks its uniqueness within the
-/// crate and checks the stable crate ID when loading a crate graph; the local
-/// half alone does not carry the whole-graph identity guarantee.
+/// rustc's `DefPathHash`; equality and hashing use the pair. The local half
+/// depends on the closure's definition path (enclosing items and per-parent
+/// disambiguators). Rustc checks its uniqueness within the crate and checks
+/// the stable crate ID when loading a crate graph; the local half alone does
+/// not carry the whole-graph identity guarantee.
 /// Stock Verus uses rustc's crate-wide `DefIndex` instead, so inserting any
 /// item renumbered every later closure in the crate.
 ///
+/// Sail fork (VI-0032): neither half enters the closure's SMT names. Cargo
+/// derives `-C metadata`, and so the stable crate ID and the seeded local
+/// hash, from the build profile and every dependency's profile; naming by the
+/// hash made solver input depend on how proc-macro crates were compiled.
+/// `spelling` is the crate name and the crate-relative definition path,
+/// encoded injectively (`def::closure_spelling`), which names the closure
+/// uniquely among crates with distinct names. Same-named crates fall back to
+/// the identity pair (see `ast_simplify`).
+///
 /// `order` is that `DefIndex`. It is used only to order the closure
 /// declarations in stock's local order. Different imported crates can reuse
-/// that index, so ties are broken by the complete pair. Equality and hashing
-/// use both identity halves and ignore `order`, so unrelated items cannot
-/// change a closure's identity.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToDebugSNode)]
+/// that index, so ties are broken by `spelling`, then by the identity pair.
+/// Equality and hashing ignore `order` and `spelling`, so unrelated items
+/// cannot change a closure's identity.
+#[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct ClosureId {
     pub name: u64,
     pub stable_crate_id: u64,
     pub order: usize,
+    pub spelling: Ident,
 }
 
 impl PartialEq for ClosureId {
@@ -1150,45 +1159,90 @@ mod closure_identity_tests {
         }
     }
 
-    fn hash_bytes(id: ClosureId) -> Vec<u8> {
+    fn hash_bytes(id: &ClosureId) -> Vec<u8> {
         let mut state = HashBytes::default();
         id.hash(&mut state);
         state.0
+    }
+
+    fn id(name: u64, stable_crate_id: u64, order: usize, spelling: &str) -> ClosureId {
+        ClosureId { name, stable_crate_id, order, spelling: std::sync::Arc::new(spelling.into()) }
     }
 
     #[test]
     fn equal_local_halves_from_different_crates_are_distinct_keys() {
         // Force the collision which a naturally generated two-crate fixture
         // cannot reliably produce. Both the key and hash input must retain
-        // the crate half; the ordering index must not become identity.
-        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7 };
-        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7 };
-        let same_a = ClosureId { order: 99, ..a };
+        // the crate half; neither the ordering index nor the spelling may
+        // become identity.
+        let a = id(42, 1, 7, "c%v&f.closure");
+        let b = id(42, 2, 7, "c%v&f.closure");
+        let same_a = id(42, 1, 99, "other%v&g.closure");
         let mut types = HashMap::new();
-        types.insert(a, "crate A");
-        types.insert(b, "crate B");
+        types.insert(a.clone(), "crate A");
+        types.insert(b.clone(), "crate B");
         assert_ne!(a, b);
         assert_eq!(types.len(), 2);
         assert_eq!(types[&same_a], "crate A");
-        assert_eq!(hash_bytes(a), [1u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
-        assert_eq!(hash_bytes(b), [2u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
-        assert_eq!(hash_bytes(a), hash_bytes(same_a));
+        assert_eq!(hash_bytes(&a), [1u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
+        assert_eq!(hash_bytes(&b), [2u64.to_ne_bytes(), 42u64.to_ne_bytes()].concat());
+        assert_eq!(hash_bytes(&a), hash_bytes(&same_a));
     }
 
     #[test]
-    fn closure_and_impl_names_retain_both_halves_but_not_order() {
-        let a = ClosureId { name: 42, stable_crate_id: 1, order: 7 };
-        let b = ClosureId { name: 42, stable_crate_id: 2, order: 7 };
-        let same_a = ClosureId { order: 99, ..a };
-        let a_path = crate::def::prefix_closure_type(a);
-        let b_path = crate::def::prefix_closure_type(b);
-        assert_eq!(&*a_path.segments[0], "anonymous_closure%1_42");
-        assert_eq!(&*b_path.segments[0], "anonymous_closure%2_42");
-        assert_ne!(a_path, b_path);
-        assert_eq!(a_path, crate::def::prefix_closure_type(same_a));
-        for kind in [ClosureKind::Fn, ClosureKind::FnMut, ClosureKind::FnOnce] {
-            assert_ne!(crate::def::impl_closure(kind, a), crate::def::impl_closure(kind, b));
-            assert_eq!(crate::def::impl_closure(kind, a), crate::def::impl_closure(kind, same_a));
+    fn closure_and_impl_names_use_the_spelling_not_the_identity() {
+        // Sail VI-0032: the stable crate ID and the local hash depend on
+        // Cargo's `-C metadata`; names must not contain them.
+        let a = id(42, 1, 7, "c%v&f.closure");
+        let other_build = id(43, 2, 8, "c%v&f.closure");
+        let a_path = crate::def::prefix_closure_type(&a.spelling);
+        assert_eq!(&*a_path.segments[0], "anonymous_closure%c%v&f.closure");
+        assert_eq!(a_path, crate::def::prefix_closure_type(&other_build.spelling));
+        assert_eq!(
+            &*crate::def::impl_closure(ClosureKind::FnMut, &a.spelling),
+            "impl_closure&%FnMut%c%v&f.closure"
+        );
+        // The fallback for same-named crates keeps the identity pair.
+        assert_eq!(crate::def::closure_identity_spelling(&a), "c%v&f.closure%1_42");
+        assert_ne!(
+            crate::def::closure_identity_spelling(&a),
+            crate::def::closure_identity_spelling(&other_build)
+        );
+        let kinds = [ClosureKind::Fn, ClosureKind::FnMut, ClosureKind::FnOnce];
+        for k1 in kinds {
+            for k2 in kinds {
+                // `%` ends the kind: `Fn` + `Mutc` is not `FnMut` + `c`.
+                assert_eq!(
+                    crate::def::impl_closure(k1, "Mutc%x") == crate::def::impl_closure(k2, "c%x"),
+                    false
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn closure_spellings_are_injective() {
+        use crate::def::{DefPathPart::*, closure_spelling};
+        let cases: Vec<(&str, Vec<crate::def::DefPathPart>)> = vec![
+            ("c", vec![Named('v', "f", 0), Anon("closure", 0)]),
+            ("c", vec![Named('v', "f", 0), Anon("closure", 1)]),
+            ("c", vec![Named('t', "f", 0), Anon("closure", 0)]),
+            ("c", vec![Named('v', "f", 1), Anon("closure", 0)]),
+            ("c", vec![Named('v', "f.closure", 0)]),
+            ("c", vec![Named('v', "closure", 0)]),
+            ("c", vec![Anon("closure", 0)]),
+            ("c%v", vec![Anon("closure", 0)]),
+            ("c", vec![Named('v', "é", 0), Anon("closure", 0)]),
+            ("c", vec![Named('v', "$e9$", 0), Anon("closure", 0)]),
+            ("d", vec![Named('v', "f", 0), Anon("closure", 0)]),
+        ];
+        let spellings: Vec<String> = cases.iter().map(|(k, p)| closure_spelling(k, p)).collect();
+        assert_eq!(spellings[0], "c%v&f.closure");
+        assert_eq!(spellings[1], "c%v&f.closure!1");
+        let distinct: std::collections::HashSet<&String> = spellings.iter().collect();
+        assert_eq!(distinct.len(), spellings.len(), "{spellings:?}");
+        for s in &spellings {
+            assert!(s.chars().all(|c| c.is_ascii_alphanumeric() || "_$%&!.".contains(c)), "{s}");
         }
     }
 }

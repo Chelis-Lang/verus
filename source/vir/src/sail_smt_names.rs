@@ -125,7 +125,7 @@ fn candidate_key(function: &Function) -> Option<Vec<u8>> {
         return None;
     }
     let mut key = Key::new();
-    key.field(b"sail-function-alias-03")?;
+    key.field(b"sail-function-alias-04")?;
     key.path(module)?;
     key.path(self_path)?;
     key.path(trait_path)?;
@@ -160,10 +160,12 @@ impl Key {
             CrateId::Core => self.field(b"core")?,
             CrateId::Alloc => self.field(b"alloc")?,
             CrateId::Vstd => self.field(b"vstd")?,
-            CrateId::Id(name, id) => {
+            // VI-0032: the crate's name, not its stable crate ID, which Cargo
+            // derives from build profiles. Same-named crates can now produce
+            // equal keys; `select` then keeps every one of them legacy.
+            CrateId::Id(name, _) => {
                 self.field(b"id")?;
                 self.field(name.as_bytes())?;
-                self.field(&id.to_be_bytes())?;
             }
         }
         self.field(&u32::try_from(path.segments.len()).ok()?.to_be_bytes())?;
@@ -351,6 +353,39 @@ mod tests {
         assert_eq!(key.bytes, before);
         assert!(candidate_key(&function(1, &"x".repeat(KEY_LIMIT))).is_none());
         assert_ne!(alias_name(&[0, 1]), alias_name(&[0, 1, 0]));
+    }
+
+    #[test]
+    fn spellings_do_not_depend_on_stable_crate_ids_and_same_named_crates_stay_legacy() {
+        let in_crate = |crate_id: u64| {
+            let mut f = function(1, "clone").x.clone();
+            let FunctionKind::TraitMethodImpl { impl_path, trait_path, trait_typ_args, .. } =
+                &mut f.kind
+            else {
+                unreachable!()
+            };
+            let module = path(crate_id, &["m"]);
+            *impl_path = module.push_segment(Arc::new("impl&%1".to_string()));
+            *trait_path = path(crate_id, &["T"]);
+            *trait_typ_args = Arc::new(vec![Arc::new(TypX::Datatype(
+                Dt::Path(path(crate_id, &["S"])),
+                Arc::new(vec![]),
+                Arc::new(vec![]),
+            ))]);
+            f.name = Arc::new(FunX { path: impl_path.push_segment(Arc::new("clone".to_string())) });
+            f.owning_module = Some(module);
+            Spanned::new(span(), f)
+        };
+        let (a, b) = (in_crate(11), in_crate(12));
+        assert!(candidate_key(&a).is_some());
+        assert_eq!(candidate_key(&a), candidate_key(&b));
+        let alone_a = SmtAliases::from_merged_crate(&krate(vec![a.clone()]), false);
+        let alone_b = SmtAliases::from_merged_crate(&krate(vec![b.clone()]), false);
+        assert_eq!(alone_a.get(&a.x.name.path), alone_b.get(&b.x.name.path));
+        assert!(alone_a.get(&a.x.name.path).is_some());
+        let both = SmtAliases::from_merged_crate(&krate(vec![a.clone(), b.clone()]), false);
+        assert!(both.get(&a.x.name.path).is_none());
+        assert!(both.get(&b.x.name.path).is_none());
     }
 
     #[test]
