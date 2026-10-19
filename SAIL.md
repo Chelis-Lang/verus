@@ -108,7 +108,11 @@ supported exact concrete trait functions at AIR rendering only. All duplicate
 labels remain legacy; raw inline AIR disables aliases for the whole invocation.
 No coherence uniqueness or native/producer inventory parity is assumed.
 
-The measured production source is `0a4a06cb6431d5a36e1ea4c8eb9c8da938866a24`.
+The measured production source is `0a4a06cb6431d5a36e1ea4c8eb9c8da938866a24`
+on `upstream/426d8b0`. Upstream 7d82994 removed `Verifier::erasure_hints`,
+whose unpruned crate fed the alias map, so the rebased `113fb466` keeps the
+same pre-prune merged crate in a new `Verifier::sail_unpruned_crate`. The
+measurements below are of `0a4a06cb` and are not re-run on the rebase.
 Its native normal Linux runtime and matching vstd build pass, as do five pure VIR
 controls and eight repaired compiler fixtures against both the independent
 accepted runtime and the candidate. The original failed wrapper/fixture attempts
@@ -146,9 +150,11 @@ selection. This candidate is not a selected Sail runtime.
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
-  for example `upstream/426d8b0` (the current base) and `upstream/8dea4a2`.
+  for example `upstream/7d82994` (the current base, Verus
+  0.2026.10.18.7d82994 on Rust 1.99.1), `upstream/426d8b0` (the previous
+  base) and `upstream/8dea4a2`.
 - `sail` (default): the current upstream base, then, in order (fixes made
-  after the engine sit on top of item 3 until the next upstream rebase moves
+  after the engine sit on top of item 3 until a later upstream rebase moves
   them below the engine):
   1. one harness commit and one commit per fix, each fix with its regression
      test `source/rust_verify_test/tests/sail_vi<NNNN>_*.rs`;
@@ -169,36 +175,56 @@ the pinned commit; that is expected and does not affect the runtime source.
 
 ## Divergences from upstream
 
-`git log --reverse upstream/426d8b0..sail`, Verus source commits only:
+`git log --reverse upstream/7d82994..sail`, Verus source commits only:
 
 | Commit | Subject | Sail issue | What changes for a user | Regression test |
 |---|---|---|---|---|
-| `15763f47` | test: pass raw verifier arguments through the rust_verify_test harness | (harness) | Nothing; tests only. `--sail-raw=<arg>` passes one argument to the verifier. | used by every `sail_vi*` test |
-| `9a5b2cc8` | fix: generate enum arrow accessors in source order | VI-0001 | Generated `arrow_*` accessors, and the SMT input, are emitted in field source order instead of `HashMap` order (direct `verus` runs). | `sail_vi0001_accessor_order` |
-| `404a1e30` | fix: choose automatic triggers in a deterministic search order | VI-0015 | Automatic trigger choice is the same on every run; the search and scoring are unchanged, so the trigger is one stock can choose. | `sail_vi0015_trigger_order` |
-| `c9de60c6` | fix: report bucket start notes in queue order | VI-0012 | With a function or module filter, "verifying <bucket>" notes print in queue order; text and conditions unchanged. | `sail_vi0012_progress_order` |
-| `bf59e1f0` | fix: list output-json func-details sorted by name | VI-0008 | `--output-json` `func-details` is sorted by name instead of hash order. | `sail_vi0008_func_details_order` |
-| `8a5d3655` | fix: record bit-vector failures in the function failure set | VI-0003 | A failed bit-vector or Singular query is reported with `"success": false` in `--output-json --time` (stock reports `true`). | `sail_vi0003_bitvector_success` |
-| `3566421a` | fix: omit unselected functions from function timing | VI-0009 | With `--verify-function`, functions the filter skipped no longer appear in timing output as successes. | `sail_vi0009_selected_timing` |
-| `fbde5ea3` | feat: add function-path to the timing function breakdown | VI-0010 | Timing entries gain a `function-path` field that distinguishes trait implementations sharing a friendly name; existing fields unchanged. | `sail_vi0010_function_path` |
-| `324c487c` | fix: give each crate its own log directory under cargo verus | VI-0004 | Under `cargo verus`, each crate logs to `<log-dir>/<crate>` (or `<crate>-bin`) instead of all crates clearing one shared directory. Direct runs unchanged. | `sail_vi0004_cargo_log_dirs` |
-| `af212563` | fix: declare enum arrow accessors in source order in the verifier | VI-0001 | The same accessor order for `cargo verus` builds, whose builtin macros come from the project's dependency source rather than this fork. | `sail_vi0001_impl_accessor_order` |
-| `13a1176c` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
-| `9e32601e` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
-| `bc9cda09` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
-| `8d03ab54` | fix: name closure types by definition path, not crate-wide index | VI-0019 | Introduces stable definition-path closure names instead of crate-wide `DefIndex`, so inserting an item no longer renames closures in other modules. The initial truncated identity is superseded by `cc7bbce4` below. Declarations keep stock's order; the SMT input equals stock's up to renaming and line wrapping. Included in the cc7 pin update. | `sail_vi0019_closure_ids` |
-| `3f7f6c51` | fix: order imported closure index ties deterministically | VI-0019 | Imported trait-default bodies can contain distinct closures with the same crate-local `DefIndex`. Break those declaration-order ties by the stable closure name, rather than hash-map iteration. The two-crate regression observes both exported closure types and checks their order over sixteen fresh processes. Included in the cc7 pin update. | `sail_vi0019_closure_ids` |
-| `b4450da9` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
-| `5793253c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Included in the qualified cc7 runtime. | `output_json` multi-note tests assert serialized order and original set membership |
-| `cc7bbce4` | fix: retain full definition-path identity for closures | VI-0019 | Equality, hashing and SMT names retain both stable crate ID and local definition hash; the declaration index only orders output. Fresh matching runtime, vstd and exports are required. | two VIR identity tests and the 16-run `sail_vi0019_closure_ids` two-crate regression |
-| `425ec23b`, `a82c0b82` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
-| `fd26e888`, `aead21d2` | perf: stabilize spec formal solver names by position; fix: align spec termination proof parameters | VI-0023, proposed Sail ADR 0054 | Candidate positional names preserve imported caller axioms across a formal rename. Unselected; component measurements do not qualify the combined runtime. | Three spec-name VIR tests and five `sail_vi0023_spec_parameter_names` cases |
-| `de1f0e1a` | test: isolate spec parameter regression scratch directories | VI-0023 | Gives each regression case its own harness scratch name, including when exact cases run in separate concurrent processes. Assertions and runtime behavior are unchanged. | All five cases with four test threads and four separate-process workers |
+| `e06a1970` | test: pass raw verifier arguments through the rust_verify_test harness | (harness) | Nothing; tests only. `--sail-raw=<arg>` passes one argument to the verifier. | used by every `sail_vi*` test |
+| `b5b76aa8` | fix: generate enum arrow accessors in source order | VI-0001 | Generated `arrow_*` accessors, and the SMT input, are emitted in field source order instead of `HashMap` order (direct `verus` runs). | `sail_vi0001_accessor_order` |
+| `e3ac99e5` | fix: choose automatic triggers in a deterministic search order | VI-0015 | Automatic trigger choice is the same on every run; the search and scoring are unchanged, so the trigger is one stock can choose. | `sail_vi0015_trigger_order` |
+| `41de495a` | fix: report bucket start notes in queue order | VI-0012 | With a function or module filter, "verifying <bucket>" notes print in queue order; text and conditions unchanged. | `sail_vi0012_progress_order` |
+| `34e7befd` | fix: list output-json func-details sorted by name | VI-0008 | `--output-json` `func-details` is sorted by name instead of hash order. | `sail_vi0008_func_details_order` |
+| `434e2876` | fix: record bit-vector failures in the function failure set | VI-0003 | A failed bit-vector or Singular query is reported with `"success": false` in `--output-json --time` (stock reports `true`). | `sail_vi0003_bitvector_success` |
+| `973580cc` | fix: omit unselected functions from function timing | VI-0009 | With `--verify-function`, functions the filter skipped no longer appear in timing output as successes. | `sail_vi0009_selected_timing` |
+| `df0923eb` | feat: add function-path to the timing function breakdown | VI-0010 | Timing entries gain a `function-path` field that distinguishes trait implementations sharing a friendly name; existing fields unchanged. | `sail_vi0010_function_path` |
+| `51176892` | fix: give each crate its own log directory under cargo verus | VI-0004 | Under `cargo verus`, each crate logs to `<log-dir>/<crate>` (or `<crate>-bin`) instead of all crates clearing one shared directory. Direct runs unchanged. | `sail_vi0004_cargo_log_dirs` |
+| `402b2dba` | fix: declare enum arrow accessors in source order in the verifier | VI-0001 | The same accessor order for `cargo verus` builds, whose builtin macros come from the project's dependency source rather than this fork. | `sail_vi0001_impl_accessor_order` |
+| `10864896` | feat: interactive repair engine | (Sail ADR 0027) | Adds the engine Sail drives (`rust_verify/src/sail_engine.rs`, hooks in `rust_verify/src/driver.rs` and `rust_verify/src/verifier.rs`, and a friendly-name helper in `vir/src/ast_util.rs`). Only active when Sail requests it; ordinary runs are unchanged. | Sail's engine differential checks |
+| `0588ff5d` | fix: list output-json timing modules and functions by name | VI-0017 | `--output-json --time` lists modules and functions sorted by name instead of slowest first (modules) and hash order (functions), so the first entry is no longer the slowest; values and the text `--time` report unchanged. This corrects structured output; it is not an order stock produces. In Sail's pin since `73dea021`. | `sail_vi0017_timing_order` |
+| `9f6ed5b6` | fix: print bucket diagnostics in bucket order | VI-0007 | Errors from different modules print in bucket order instead of completion order; stock was observed printing the same stderr (1 of 40 runs of `debug_expand.rs`, 8 of 20 of the VI-0007 reproduction). A finished module's errors wait until every lower-numbered module finishes, so they can appear later than in stock; the final output is the same. In Sail's pin since `73dea021`. | `sail_vi0007_error_order` |
+| `b4883b42` | fix: name closure types by definition path, not crate-wide index | VI-0019 | Introduces stable definition-path closure names instead of crate-wide `DefIndex`, so inserting an item no longer renames closures in other modules. The initial truncated identity is superseded by the full-identity fix below. Declarations keep stock's order; the SMT input equals stock's up to renaming and line wrapping. Included in the cc7 pin update. | `sail_vi0019_closure_ids` |
+| `d5f245eb` | fix: order imported closure index ties deterministically | VI-0019 | Imported trait-default bodies can contain distinct closures with the same crate-local `DefIndex`. Break those declaration-order ties by the stable closure name, rather than hash-map iteration. The two-crate regression observes both exported closure types and checks their order over sixteen fresh processes. Included in the cc7 pin update. | `sail_vi0019_closure_ids` |
+| `8ffb1185` | feat: name prebuilt registry sources by the user's real Cargo home | (Sail ADR 0048) | Only with `SAIL_RUSTC_DEV_SOURCE_BASE=<virtual base>=<registry directory>`, which Sail sets: every compilation sets rustc's `real_rustc_dev_source_base_dir` to the registry directory, so names under the virtual rustc-dev base (`/rustc-dev/<rustc commit>`) read as the user's own files; exported VIR records such files by the base and imported VIR maps them back. Without the variable nothing changes. | `sail_source_base` library test; Sail's `scripts/shipped-deps-check.py` against stock |
+| `c545ee8c` | fix: serialize proof-note arrays in lexical order | VI-0021 | The two proof-note JSON arrays are sorted; internal set membership, verdicts and rendered diagnostics are unchanged. Included in the qualified cc7 runtime. | `output_json` multi-note tests assert serialized order and original set membership |
+| `899d5f11` | fix: retain full definition-path identity for closures | VI-0019 | Equality, hashing and SMT names retain both stable crate ID and local definition hash; the declaration index only orders output. Fresh matching runtime, vstd and exports are required. | two VIR identity tests and the 16-run `sail_vi0019_closure_ids` two-crate regression |
+| `855d5f79`, `a737c533` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
+| `e28c13b4`, `12a2bab8` | perf: stabilize spec formal solver names by position; fix: align spec termination proof parameters | VI-0023, proposed Sail ADR 0054 | Candidate positional names preserve imported caller axioms across a formal rename. Unselected; component measurements do not qualify the combined runtime. | Three spec-name VIR tests and five `sail_vi0023_spec_parameter_names` cases |
+| `216e2bda` | test: isolate spec parameter regression scratch directories | VI-0023 | Gives each regression case its own harness scratch name, including when exact cases run in separate concurrent processes. Assertions and runtime behavior are unchanged. | All five cases with four test threads and four separate-process workers |
+
+The rebase onto `upstream/7d82994` rewrote every commit, so the shas above
+differ from those in Sail's records, the `pinned/<short sha>` tags and the
+sections below, which name the commits as they were on `upstream/426d8b0`:
+`e06a1970` (was `15763f47`), `b5b76aa8` (was `9a5b2cc8`), `e3ac99e5` (was
+`404a1e30`), `41de495a` (was `c9de60c6`), `34e7befd` (was `bf59e1f0`),
+`434e2876` (was `8a5d3655`), `973580cc` (was `3566421a`), `df0923eb` (was
+`fbde5ea3`), `51176892` (was `324c487c`), `402b2dba` (was `af212563`),
+`10864896` (was `13a1176c`), `0588ff5d` (was `9e32601e`), `9f6ed5b6` (was
+`bc9cda09`), `b4883b42` (was `8d03ab54`), `d5f245eb` (was `3f7f6c51`),
+`8ffb1185` (was `b4450da9`), `c545ee8c` (was `5793253c`), `899d5f11` (was
+`cc7bbce4`), `855d5f79` (was `425ec23b`), `a737c533` (was `a82c0b82`),
+`e28c13b4` (was `fd26e888`), `12a2bab8` (was `aead21d2`), `216e2bda` (was
+`de1f0e1a`).
+The rebase kept the original commit order on purpose, including the merges
+and the post-engine fixes above `feat: interactive repair engine`, so that
+`git range-diff upstream/426d8b0..<old> upstream/7d82994..<new>` stays
+reviewable commit by commit. Moving those fixes below the engine remains to
+be done on a later rebase. Only the head of the rebased series was built and
+tested; the intermediate commits were not.
 
 ### Qualified full closure identity
 
-The qualified `cc7bbce4` source retains both 64-bit halves of rustc
-1.98.1's `DefPathHash`: the stable crate ID and the crate-local definition
+The qualified `cc7bbce4` source (rebased as `899d5f11`) retains both 64-bit
+halves of rustc's `DefPathHash`: the stable crate ID and the crate-local definition
 hash. Equality, hashing, internal datatype names and closure-impl names use
 the complete pair; the crate-local declaration index only controls ordering,
 with ties broken by the complete pair. The local hash is seeded by the stable
@@ -207,7 +233,8 @@ arbitrary local halves from different crates. The complete pair preserves the
 compiler's intended crate-graph identity instead of relying on that truncation.
 No actual cross-crate hash collision or wrong verdict has been observed.
 The source API is rustc's pinned
-[`DefPathHash`](https://github.com/rust-lang/rust/blob/1.98.1/compiler/rustc_span/src/def_id.rs),
+[`DefPathHash`](https://github.com/rust-lang/rust/blob/1.99.1/compiler/rustc_span/src/def_id.rs)
+(Rust 1.99.1 on the current base; `cc7bbce4` was qualified on Rust 1.98.1),
 using `stable_crate_id().as_u64()` and `local_hash().as_u64()` separately.
 
 The two added unit controls force equal local halves with different crate
@@ -221,7 +248,8 @@ functions per arm, zero Different/Unstable/infrastructure errors; two optional
 Singular projects skipped per arm). Three runs of every current FAST input
 (147 inputs, 441 executions) yield 577 query buckets with no varying buckets
 or problems under the unchanged determinism oracle. Earlier `8a373f81`
-evidence is not substituted for these cc7 runs.
+evidence is not substituted for these cc7 runs. This qualification was on
+`upstream/426d8b0` and does not carry over to the rebased commits.
 
 Matching native normal Linux and Apple-silicon runtimes, vstd and dependency
 exports were built from cc7. The extra identity field changes exported VIR's
@@ -338,10 +366,17 @@ source ../tools/activate          # builds vargo and puts it on PATH
 vargo build --release             # builds Verus and verifies vstd
 vargo test --release -p rust_verify_test \
   $(for f in rust_verify_test/tests/sail_vi*.rs; do echo --test "$(basename "$f" .rs)"; done)
+# last: rebuild vstd the way the release does
+./target-verus/release/cargo-verus build --release --manifest-path vstd/Cargo.toml
 ```
 
+Run the release-style vstd build after `vargo test`, never before it, as
+`.github/workflows/sail-fork.yml` does. It overwrites
+`target-verus/release/libvstd.rlib`, and `vargo test` run after it fails two
+`sail_vi0019` tests with "can't find crate for `verus_builtin_macros`".
+
 Upstream's [BUILD.md](BUILD.md) and its
-[CONTRIBUTING.md](https://github.com/verus-lang/verus/blob/426d8b01e7ffb910a36c15e1f870ff985bb61eef/CONTRIBUTING.md)
+[CONTRIBUTING.md](https://github.com/verus-lang/verus/blob/7d829946231d6413a398f6e4160cdfe951261dad/CONTRIBUTING.md)
 (at the pinned upstream commit) cover the rest.
 
 ## Upgrading to a new Verus
