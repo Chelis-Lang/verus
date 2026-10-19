@@ -13,6 +13,7 @@ use crate::def::{
     FUEL_PARAM, FUEL_TYPE, Spanned, decrease_at_entry, rename_rec_param, unique_bound, unique_local,
 };
 use crate::messages::{Span, error};
+use crate::sail_hash::{HashMap, HashSet};
 use crate::scc::Graph;
 use crate::sst::{
     BndX, CallFun, Dest, Exp, ExpX, Exps, InternalFun, LocalDecl, LocalDeclX, Stm, StmX,
@@ -22,7 +23,6 @@ use crate::sst_visitor::{exp_rename_vars, map_exp_visitor, map_stm_visitor};
 use crate::util::vec_map_result;
 use air::ast_util::str_typ;
 use air::messages::Diagnostics;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -185,7 +185,7 @@ fn check_decrease_call(
             ident_var_binder(&rename_rec_param(&param.x.name, n), &arg.clone())
         })
         .collect();
-    let renames: HashMap<UniqueIdent, UniqueIdent> = params
+    let renames: std::collections::HashMap<UniqueIdent, UniqueIdent> = params
         .iter()
         .enumerate()
         .map(|(n, param)| {

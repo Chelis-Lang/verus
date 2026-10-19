@@ -1190,7 +1190,10 @@ impl FunctionKind {
 
 // Return a non-TraitMethodImpl for f
 // (if f points to a TraitMethodImpl, return the corresponding method instead)
-pub(crate) fn get_non_trait_impl(func_map: &HashMap<Fun, Function>, f: &Fun) -> Option<Function> {
+pub(crate) fn get_non_trait_impl<S: std::hash::BuildHasher>(
+    func_map: &HashMap<Fun, Function, S>,
+    f: &Fun,
+) -> Option<Function> {
     if let Some(function) = func_map.get(f) {
         if let FunctionKind::TraitMethodImpl { method, .. } = &function.x.kind {
             if let Some(function) = func_map.get(method) {

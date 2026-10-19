@@ -1075,7 +1075,10 @@ fn exec_closure_spec(
     }
 }
 
-pub(crate) fn need_fndef_axiom(fndef_typs: &HashSet<Fun>, f: &Function) -> bool {
+pub(crate) fn need_fndef_axiom<S: std::hash::BuildHasher>(
+    fndef_typs: &HashSet<Fun, S>,
+    f: &Function,
+) -> bool {
     if fndef_typs.contains(&f.x.name) {
         return true;
     }

@@ -2372,6 +2372,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
+
+[[package]]
 name = "rustc_hir_analysis"
 version = "0.0.0"
 dependencies = [
@@ -3310,6 +3316,7 @@ dependencies = [
  "indexmap 2.14.0",
  "num-bigint 0.5.1",
  "num-traits",
+ "rustc-hash",
  "serde",
  "sha2",
  "sise",

@@ -707,11 +707,11 @@ pub fn inherit_default_bodies(
     Ok(Arc::new(kratex))
 }
 
-pub(crate) fn redirect_calls_in_default_methods(
-    func_map: &HashMap<Fun, Function>,
-    trait_map: &HashMap<Path, Trait>,
-    trait_impl_map: &HashMap<(Fun, Path), Fun>,
-    trait_impl_from_extension: &HashMap<Path, Path>,
+pub(crate) fn redirect_calls_in_default_methods<S: std::hash::BuildHasher>(
+    func_map: &HashMap<Fun, Function, S>,
+    trait_map: &HashMap<Path, Trait, S>,
+    trait_impl_map: &HashMap<(Fun, Path), Fun, S>,
+    trait_impl_from_extension: &HashMap<Path, Path, S>,
     function: &Function,
     span: &Span,
     callee: Fun,
