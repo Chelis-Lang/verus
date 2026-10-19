@@ -42,6 +42,54 @@ pub(crate) fn mk_crate_id<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> CrateId {
     }
 }
 
+// Sail fork (VI-0032): see `vir::def::closure_spelling`.
+fn closure_spelling<'tcx>(tcx: TyCtxt<'tcx>, def: DefId) -> String {
+    use rustc_hir::definitions::DefPathData;
+    use vir::def::DefPathPart;
+    let def_path = tcx.def_path(def);
+    let names: Vec<String> = def_path
+        .data
+        .iter()
+        .map(|d| match d.data {
+            DefPathData::TypeNs(s)
+            | DefPathData::ValueNs(s)
+            | DefPathData::MacroNs(s)
+            | DefPathData::LifetimeNs(s)
+            | DefPathData::OpaqueLifetime(s)
+            | DefPathData::AnonAssocTy(s) => s.to_string(),
+            _ => String::new(),
+        })
+        .collect();
+    let parts: Vec<DefPathPart> = def_path
+        .data
+        .iter()
+        .zip(names.iter())
+        .map(|(d, name)| {
+            let n = d.disambiguator;
+            match d.data {
+                DefPathData::TypeNs(_) => DefPathPart::Named('t', name, n),
+                DefPathData::ValueNs(_) => DefPathPart::Named('v', name, n),
+                DefPathData::MacroNs(_) => DefPathPart::Named('m', name, n),
+                DefPathData::LifetimeNs(_) => DefPathPart::Named('l', name, n),
+                DefPathData::OpaqueLifetime(_) => DefPathPart::Named('o', name, n),
+                DefPathData::AnonAssocTy(_) => DefPathPart::Named('a', name, n),
+                DefPathData::CrateRoot => DefPathPart::Anon("crate", n),
+                DefPathData::Impl => DefPathPart::Anon("impl", n),
+                DefPathData::ForeignMod => DefPathPart::Anon("extern", n),
+                DefPathData::Use => DefPathPart::Anon("use", n),
+                DefPathData::GlobalAsm => DefPathPart::Anon("global_asm", n),
+                DefPathData::Closure => DefPathPart::Anon("closure", n),
+                DefPathData::Ctor => DefPathPart::Anon("ctor", n),
+                DefPathData::AnonConst => DefPathPart::Anon("constant", n),
+                DefPathData::OpaqueTy => DefPathPart::Anon("opaque", n),
+                DefPathData::SyntheticCoroutineBody => DefPathPart::Anon("synthetic", n),
+                DefPathData::NestedStatic => DefPathPart::Anon("nested", n),
+            }
+        })
+        .collect();
+    vir::def::closure_spelling(tcx.crate_name(def.krate).as_str(), &parts)
+}
+
 pub(crate) fn def_path_to_vir_path<'tcx>(tcx: TyCtxt<'tcx>, def_path: DefPath) -> Option<Path> {
     let krate = mk_crate_id(tcx, def_path.krate);
     let mut segments: Vec<vir::ast::Ident> = Vec::new();
@@ -1240,14 +1288,18 @@ pub(crate) fn mid_ty_to_vir_ghost<'tcx>(
             };
 
             let ret = t_rec(&sig.output().skip_binder())?.0;
-            // Sail fork (VI-0019): name the closure by its definition path, not
-            // by its crate-wide index, so inserting an item elsewhere does not
-            // rename it. The index still orders declarations as stock does.
+            // Sail fork (VI-0019): identify the closure by its definition path,
+            // not by its crate-wide index, so inserting an item elsewhere does
+            // not rename it. The index still orders declarations as stock does.
+            // VI-0032: its SMT name is spelled from the crate name and the
+            // definition path, not from the hash, which depends on Cargo's
+            // `-C metadata` and so on the build profile.
             let def_path_hash = tcx.def_path_hash(*def);
             let id = vir::ast::ClosureId {
                 name: def_path_hash.local_hash().as_u64(),
                 stable_crate_id: def_path_hash.stable_crate_id().as_u64(),
                 order: def.as_local().unwrap().local_def_index.index(),
+                spelling: Arc::new(closure_spelling(tcx, *def)),
             };
 
             let kind = substs.as_closure().kind();

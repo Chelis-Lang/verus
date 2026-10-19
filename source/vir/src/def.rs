@@ -666,8 +666,71 @@ pub fn prefix_tuple_type(i: usize) -> Path {
     Arc::new(PathX { krate: CrateId::Internal, segments: Arc::new(vec![ident]) })
 }
 
-pub fn prefix_closure_type(id: ClosureId) -> Path {
-    let ident = Arc::new(format!("{}{}_{}", PREFIX_CLOSURE_TYPE, id.stable_crate_id, id.name));
+/// One component of a crate-relative definition path, for `closure_spelling`.
+pub enum DefPathPart<'a> {
+    /// A named component with a one-letter namespace tag (for example `v` for
+    /// the value namespace) and its disambiguator.
+    Named(char, &'a str, u32),
+    /// An anonymous component (for example `closure` or `impl`) and its
+    /// disambiguator.
+    Anon(&'a str, u32),
+}
+
+// Keep [A-Za-z0-9_]; write any other character as `$<hex>$`. The result never
+// contains `$` outside an escape, nor `%`, `&`, `!` or `.`.
+fn spelling_escape(out: &mut String, s: &str) {
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            out.push(c);
+        } else {
+            out.push_str(&format!("${:x}$", c as u32));
+        }
+    }
+}
+
+/// Sail fork (VI-0032): the name of a closure type, from its crate's name and
+/// its crate-relative definition path, without rustc's stable crate ID or
+/// definition hash (which Cargo derives from build profiles). The encoding is
+/// injective: components are joined by `.`, a named component is
+/// `<tag>&<name>`, an anonymous one is its word, and a nonzero disambiguator
+/// follows as `!<n>`.
+pub fn closure_spelling(krate: &str, parts: &[DefPathPart]) -> String {
+    let mut out = String::new();
+    spelling_escape(&mut out, krate);
+    out.push('%');
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push('.');
+        }
+        let disambiguator = match part {
+            DefPathPart::Named(tag, name, d) => {
+                out.push(*tag);
+                out.push('&');
+                spelling_escape(&mut out, name);
+                *d
+            }
+            DefPathPart::Anon(word, d) => {
+                spelling_escape(&mut out, word);
+                *d
+            }
+        };
+        if disambiguator != 0 {
+            out.push_str(&format!("!{}", disambiguator));
+        }
+    }
+    out
+}
+
+/// Sail fork (VI-0032): the spelling used when two closures with distinct
+/// identities have the same `closure_spelling`, which only crates that share
+/// a name can produce. It appends the identity pair after a second `%`, so it
+/// differs from every primary spelling.
+pub fn closure_identity_spelling(id: &ClosureId) -> String {
+    format!("{}%{}_{}", id.spelling, id.stable_crate_id, id.name)
+}
+
+pub fn prefix_closure_type(spelling: &str) -> Path {
+    let ident = Arc::new(format!("{}{}", PREFIX_CLOSURE_TYPE, spelling));
     Arc::new(PathX { krate: CrateId::Internal, segments: Arc::new(vec![ident]) })
 }
 
@@ -692,8 +755,9 @@ pub(crate) fn impl_tuple(trait_suffix: &str, arity: usize) -> Ident {
     Arc::new(format!("{}{}{}", PREFIX_IMPL_TUPLE, trait_suffix, arity))
 }
 
-pub(crate) fn impl_closure(kind: ClosureKind, id: ClosureId) -> Ident {
-    Arc::new(format!("{}{}{}_{}", PREFIX_IMPL_CLOSURE, kind, id.stable_crate_id, id.name))
+pub(crate) fn impl_closure(kind: ClosureKind, spelling: &str) -> Ident {
+    // `%` ends the kind, so `Fn` and `FnMut` cannot run into a crate name.
+    Arc::new(format!("{}{}%{}", PREFIX_IMPL_CLOSURE, kind, spelling))
 }
 
 pub(crate) fn impl_fndef_path(fun: &Fun, kind: ClosureKind) -> Path {
