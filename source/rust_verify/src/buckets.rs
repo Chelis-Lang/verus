@@ -117,3 +117,25 @@ pub fn get_buckets(
         .map(|(bucket_id, vec)| (bucket_id, Bucket { funs: vec.into_iter().collect() }))
         .collect()
 }
+
+/// Sail fork (#244): a deterministic estimate of each bucket's verification
+/// cost, used only to dispatch expensive buckets first. It is the number of
+/// expressions in the specifications and bodies of the bucket's functions
+/// that have a body and are checked: proof and exec functions, and spec
+/// functions with a `decreases` clause. It never affects any query.
+pub fn estimated_costs(krate: &Krate, buckets: &[(BucketId, &Bucket)]) -> Vec<u64> {
+    let mut sizes: HashMap<&Fun, u64> = HashMap::new();
+    for function in &krate.functions {
+        let checked = function.x.body.is_some()
+            && (function.x.mode != vir::ast::Mode::Spec || !function.x.decrease.is_empty());
+        if checked {
+            sizes.insert(&function.x.name, vir::ast_visitor::sail_function_expr_count(function));
+        }
+    }
+    buckets
+        .iter()
+        .map(|(_, bucket)| {
+            bucket.funs.iter().map(|f| sizes.get(f).copied().unwrap_or(0)).sum::<u64>()
+        })
+        .collect()
+}
