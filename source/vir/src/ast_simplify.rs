@@ -42,7 +42,7 @@ struct ClosureDatatype {
     output: Typ,
     kind: ClosureKind,
     path: Path,
-    // The closure's name, without the type or impl prefix (Sail VI-0032)
+    // The closure's name, without the type or impl prefix (Sail VI-0033)
     spelling: String,
 }
 
@@ -57,7 +57,7 @@ struct State {
     tuple_typs: HashSet<usize>,
     // Name of a datatype to represent each closure
     closure_typs: HashMap<ClosureId, ClosureDatatype>,
-    // Spellings already given to a closure (Sail VI-0032)
+    // Spellings already given to a closure (Sail VI-0033)
     closure_spellings: HashSet<String>,
     // Functions for which the corresponding FnDef type is used
     fndef_typs: HashSet<Fun>,
@@ -101,7 +101,7 @@ impl State {
     ) -> Path {
         let spellings = &mut self.closure_spellings;
         let e = self.closure_typs.entry(id).or_insert_with_key(|id| {
-            // Sail fork (VI-0032): distinct closures share a spelling only
+            // Sail fork (VI-0033): distinct closures share a spelling only
             // when their crates share a name. The later one in this
             // (deterministic) traversal keeps the identity pair in its name.
             let mut spelling = id.spelling.to_string();
@@ -1586,7 +1586,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
     // Preserve stock's local declaration order (rustc's DefIndex). Imported
     // trait default bodies can contain closures from different crates with
     // the same local index; break those ties independently of HashMap order,
-    // and by spelling before the stable crate ID (Sail VI-0032).
+    // and by spelling before the stable crate ID (Sail VI-0033).
     closures.sort_by(|a, b| {
         (a.0.order, &a.0.spelling, a.0.stable_crate_id, a.0.name).cmp(&(
             b.0.order,

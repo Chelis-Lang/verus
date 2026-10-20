@@ -1103,7 +1103,7 @@ pub struct CtorUpdateTail {
 /// Stock Verus uses rustc's crate-wide `DefIndex` instead, so inserting any
 /// item renumbered every later closure in the crate.
 ///
-/// Sail fork (VI-0032): neither half enters the closure's SMT names. Cargo
+/// Sail fork (VI-0033): neither half enters the closure's SMT names. Cargo
 /// derives `-C metadata`, and so the stable crate ID and the seeded local
 /// hash, from the build profile and every dependency's profile; naming by the
 /// hash made solver input depend on how proc-macro crates were compiled.
@@ -1191,7 +1191,7 @@ mod closure_identity_tests {
 
     #[test]
     fn closure_and_impl_names_use_the_spelling_not_the_identity() {
-        // Sail VI-0032: the stable crate ID and the local hash depend on
+        // Sail VI-0033: the stable crate ID and the local hash depend on
         // Cargo's `-C metadata`; names must not contain them.
         let a = id(42, 1, 7, "c%v&f.closure");
         let other_build = id(43, 2, 8, "c%v&f.closure");

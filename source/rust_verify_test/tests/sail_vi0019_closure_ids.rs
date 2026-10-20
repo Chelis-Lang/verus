@@ -206,7 +206,7 @@ fn sail_vi0019_imported_closure_index_ties_have_stable_order() {
         assert_eq!(ids.len(), 2, "fixture must retain both foreign closures");
         assert_eq!(ids[0].0, ids[1].0, "fixture must exercise an index tie");
         assert_ne!(ids[0].2, ids[1].2, "the two source-identical crates need distinct identities");
-        // VI-0032: names are spelled from the crate name and definition path,
+        // VI-0033: names are spelled from the crate name and definition path,
         // so the tie is broken by spelling, independently of crate IDs.
         assert!(ids[0].1.starts_with("dep_a%") && ids[1].1.starts_with("dep_b%"), "{ids:?}");
         let actual: Vec<String> = simple

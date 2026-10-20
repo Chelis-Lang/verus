@@ -3,7 +3,7 @@
 mod common;
 use common::*;
 
-// Sail fork regression test for VI-0032: closure types and aliased trait
+// Sail fork regression test for VI-0033: closure types and aliased trait
 // functions were named after rustc's stable crate ID (and the definition hash
 // it seeds). Cargo derives `-C metadata`, and so that ID, from the build
 // profile of the crate and of every dependency, so building the proc-macro
@@ -43,7 +43,7 @@ fn smt(metadata: &str, logs: &std::path::Path) -> String {
     let metadata = format!("--sail-raw=metadata={metadata}");
     let options = [
         "vstd",
-        "--crate-name=sail_vi0032",
+        "--crate-name=sail_vi0033",
         "--sail-raw=-C",
         metadata.as_str(),
         "--sail-raw=--log",
@@ -51,7 +51,7 @@ fn smt(metadata: &str, logs: &std::path::Path) -> String {
         "--sail-raw=--log-dir",
         log_dir.as_str(),
     ];
-    let result = verify_one_file("sail_vi0032_metadata_names", CODE.to_string(), &options);
+    let result = verify_one_file("sail_vi0033_metadata_names", CODE.to_string(), &options);
     assert!(result.is_ok(), "verification failed: {:?}", result);
     let mut files: Vec<_> = std::fs::read_dir(logs)
         .expect("log directory")
@@ -69,7 +69,7 @@ fn smt(metadata: &str, logs: &std::path::Path) -> String {
 }
 
 #[test]
-fn sail_vi0032_crate_metadata_does_not_change_smt() {
+fn sail_vi0033_crate_metadata_does_not_change_smt() {
     let a = tempfile::tempdir().expect("log directory");
     let b = tempfile::tempdir().expect("log directory");
     let smt_a = smt("sail0", a.path());

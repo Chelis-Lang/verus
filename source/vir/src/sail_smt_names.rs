@@ -160,7 +160,7 @@ impl Key {
             CrateId::Core => self.field(b"core")?,
             CrateId::Alloc => self.field(b"alloc")?,
             CrateId::Vstd => self.field(b"vstd")?,
-            // VI-0032: the crate's name, not its stable crate ID, which Cargo
+            // VI-0033: the crate's name, not its stable crate ID, which Cargo
             // derives from build profiles. Same-named crates can now produce
             // equal keys; `select` then keeps every one of them legacy.
             CrateId::Id(name, _) => {

@@ -688,7 +688,7 @@ fn spelling_escape(out: &mut String, s: &str) {
     }
 }
 
-/// Sail fork (VI-0032): the name of a closure type, from its crate's name and
+/// Sail fork (VI-0033): the name of a closure type, from its crate's name and
 /// its crate-relative definition path, without rustc's stable crate ID or
 /// definition hash (which Cargo derives from build profiles). The encoding is
 /// injective: components are joined by `.`, a named component is
@@ -721,7 +721,7 @@ pub fn closure_spelling(krate: &str, parts: &[DefPathPart]) -> String {
     out
 }
 
-/// Sail fork (VI-0032): the spelling used when two closures with distinct
+/// Sail fork (VI-0033): the spelling used when two closures with distinct
 /// identities have the same `closure_spelling`, which only crates that share
 /// a name can produce. It appends the identity pair after a second `%`, so it
 /// differs from every primary spelling.

@@ -42,7 +42,7 @@ pub(crate) fn mk_crate_id<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> CrateId {
     }
 }
 
-// Sail fork (VI-0032): see `vir::def::closure_spelling`.
+// Sail fork (VI-0033): see `vir::def::closure_spelling`.
 fn closure_spelling<'tcx>(tcx: TyCtxt<'tcx>, def: DefId) -> String {
     use rustc_hir::definitions::DefPathData;
     use vir::def::DefPathPart;
@@ -1291,7 +1291,7 @@ pub(crate) fn mid_ty_to_vir_ghost<'tcx>(
             // Sail fork (VI-0019): identify the closure by its definition path,
             // not by its crate-wide index, so inserting an item elsewhere does
             // not rename it. The index still orders declarations as stock does.
-            // VI-0032: its SMT name is spelled from the crate name and the
+            // VI-0033: its SMT name is spelled from the crate name and the
             // definition path, not from the hash, which depends on Cargo's
             // `-C metadata` and so on the build profile.
             let def_path_hash = tcx.def_path_hash(*def);
