@@ -38,12 +38,21 @@ under a narrow policy (Sail ADR 0039). A fix may only:
   already produce; or
 - correct structured output (`--output-json`, timing, logs) without changing
   verdicts or diagnostics; or
-- rename closure types by the complete stable crate-qualified definition
-  identity (Sail ADR 0049): both 64-bit halves of rustc's `DefPathHash` enter
-  equality, hashing and names. The SMT output equals stock's up to a one-to-one
-  renaming of closure symbols, in stock's local order. Imported trait-default
-  bodies can carry the same local index from different crates; those declaration
-  ties are ordered by the complete identity, independently of hash-map iteration.
+- rename closure types by their definition path (Sail ADR 0049): both 64-bit
+  halves of rustc's `DefPathHash` enter equality and hashing. Names are spelled
+  from the crate name and the crate-relative definition path, not from the
+  hash, whose stable crate ID Cargo derives from build profiles (VI-0032;
+  proposed amendment of ADR 0049). The SMT output equals stock's up to a
+  one-to-one renaming of closure symbols, in stock's local order. Imported
+  trait-default bodies can carry the same local index from different crates;
+  those declaration ties are ordered by spelling, then by the complete
+  identity, independently of hash-map iteration.
+
+Two performance changes leave every output byte-identical: the order in which
+parallel workers take buckets (Sail #244) and the hasher of VIR's hot maps
+(Sail #248). Their solver input, verdicts and diagnostics equal the
+preceding commit's; this kind of change is not yet named by ADR 0039 (a
+proposed note records it).
 
 Anything that would change a verdict needs its own Sail ADR. Each fix is
 tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
@@ -200,6 +209,9 @@ the pinned commit; that is expected and does not affect the runtime source.
 | `855d5f79`, `a737c533` | feat: observe retained compiler source inputs; fix: seal only after both phases complete | (Sail ADR 0048, disabled experiment) | Optional private source-map observation with separate GHOST/EXEC reads, latched phase failure and request binding; no default verdict, diagnostic or query change. Does not itself authorize reuse. | Source-map checksum and duplicate/missing/failed-phase library tests; native compiler/API qualification pending |
 | `e28c13b4`, `12a2bab8` | perf: stabilize spec formal solver names by position; fix: align spec termination proof parameters | VI-0023, proposed Sail ADR 0054 | Candidate positional names preserve imported caller axioms across a formal rename. Unselected; component measurements do not qualify the combined runtime. | Three spec-name VIR tests and five `sail_vi0023_spec_parameter_names` cases |
 | `216e2bda` | test: isolate spec parameter regression scratch directories | VI-0023 | Gives each regression case its own harness scratch name, including when exact cases run in separate concurrent processes. Assertions and runtime behavior are unchanged. | All five cases with four test threads and four separate-process workers |
+| `912052eb` (`perf/7d82994`) | fix: spell closure and alias SMT names without the stable crate ID | VI-0032 | Closure-type names (`anonymous_closure%<crate>%<path>`, `impl_closure&%<kind>%<crate>%<path>`) and VI-0030 function-alias keys no longer contain rustc's stable crate ID or the definition hash it seeds, so a different Cargo profile for a dependency (for example `opt-level = 3` for the proc-macro crates) no longer changes solver input. A renaming only (closure `declare-sort` lines, emitted in name order, follow the new names); fresh matching vstd and exports are required. Same-named crates whose closures share a spelling fall back to the identity pair for the later one. | `sail_vi0032_metadata_names`; `sail_vi0019_closure_ids` checks the new spelling and tie order; three VIR unit tests |
+| `1a892f97` (`perf/7d82994`) | perf: dispatch verification buckets longest-first | Sail #244 | With several threads, workers take the bucket with the largest static size estimate (expressions in checked functions' specifications and bodies) first, ties in bucket order. Queries, diagnostic order (VI-0007) and start-note order (VI-0012) are unchanged; a start note can print later. Single-threaded runs are unchanged. Measured: Vest −15% (7 threads) and −10% (15); Anvil unchanged at 7 and +2–3% (ranges overlapping) at 15 and 31, its makespan being one 101 s query. | `sail_vi0012_dispatch_order` (error order, note order, 1-thread versus 4-thread SMT bytes) |
+| `51afcba6` (`perf/7d82994`) | perf: hash VIR's hot maps with the deterministic Fx hasher | Sail #248 | VIR's call graph, recursion, pruning and context maps use `rustc-hash` 2.1.1 (new dependency, Apache-2.0 OR MIT) instead of `RandomState` SipHash. No output changes. | Fast-tier solver-input identity against `1a892f97` (Sail record) |
 
 The rebase onto `upstream/7d82994` rewrote every commit, so the shas above
 differ from those in Sail's records, the `pinned/<short sha>` tags and the
@@ -227,7 +239,9 @@ The qualified `cc7bbce4` source (rebased as `899d5f11`) retains both 64-bit
 halves of rustc's `DefPathHash`: the stable crate ID and the crate-local definition
 hash. Equality, hashing, internal datatype names and closure-impl names use
 the complete pair; the crate-local declaration index only controls ordering,
-with ties broken by the complete pair. The local hash is seeded by the stable
+with ties broken by the complete pair. The unselected VI-0032 fix (`912052eb`) keeps the
+pair for equality and hashing but spells names from the crate name and the
+definition path: Cargo derives the stable crate ID from build profiles. The local hash is seeded by the stable
 crate ID, but that does not extend rustc's within-crate collision check to
 arbitrary local halves from different crates. The complete pair preserves the
 compiler's intended crate-graph identity instead of relying on that truncation.
