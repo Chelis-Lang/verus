@@ -314,12 +314,29 @@ engine runtimes published here as GitHub prereleases. Earlier pinned commits
 | `engine-runtime-73dea021-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (until `cc7bbce4`) |
 | `engine-runtime-cc7bbce4-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (cc7 pin update) |
 | `engine-runtime-cc7bbce4-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (cc7 pin update) |
+| `engine-runtime-cbbcdf44-linux` | Linux x86-64 | none: candidate only (0.1.0 join, Sail PR #227), never pinned on main |
+| `engine-runtime-cbbcdf44-macos` | macOS arm64 (Apple silicon) | none: candidate only (0.1.0 join, Sail PR #227), never pinned on main |
+| `engine-runtime-9c0ca7e7-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (Sail #249, until `64baccbb`) |
+| `engine-runtime-9c0ca7e7-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (Sail #249, until `64baccbb`) |
+| `engine-runtime-64baccbb-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (Sail #251, until `f8589ed4`) |
+| `engine-runtime-64baccbb-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (Sail #251, until `f8589ed4`) |
+| `engine-runtime-f8589ed4-linux` | Linux x86-64 | `engine/verus/artifact-linux.json` (Sail #267) |
+| `engine-runtime-f8589ed4-macos` | macOS arm64 (Apple silicon) | `engine/verus/artifact-macos.json` (Sail #267) |
 
 The cc7 normal archive digests are
 `717680b4cb126f48397b02f32dcbf54e0f2a320fa0c16c86a97237a8c3eee8b1`
 (Linux, 14 files including the original manifest) and
 `65523848b990f49221035a087e685fe9666e65d34cb5b9d1b76f25f690f86d9b`
 (macOS, 15 files including the original manifest).
+
+Archive digests (`engine-runtime.tar.gz` sha256) of the later releases:
+
+| Commit | Linux x86-64 | macOS arm64 |
+|---|---|---|
+| `cbbcdf44` | `ae901465277e0e6950f4de14f32bb211f21bea993feabb04a0e44567a7ce6f85` | `8e8bd410a80f8a321a0a67676294a1769c812e207ea697f61c4bb88337b093a7` |
+| `9c0ca7e7` | `b5f6f9f3989c2fbb9f76e6a3037353763d6a605045374aa989d65600807de31a` | `3b771f41a602de8c0d1f31c622e8bf507320c6c9343f5c0e097328361a44ff4b` |
+| `64baccbb` | `97ebb7cf21982c20feffa41bd342ea4d6e33735ebf305704a0a2e8b9c7cfab21` | `9f9381d53e1478aaae589d7d00399d01f5fee4e56daf81d9e4cde03e5dda69c2` |
+| `f8589ed4` | `93ea60172527a25dc9b433387c82924740c6185fb57aa60554ce501cf4e8f71c` | `6f523cea7595b82cc6e0f1434b8ff550b6295a3897e8301733511b78065fca12` |
 
 Each release has the archive `engine-runtime.tar.gz` and its checksum file
 `engine-runtime.tar.gz.sha256`. The archive holds `sail-build.json` (the build
