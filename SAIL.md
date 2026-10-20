@@ -176,10 +176,10 @@ selection. This candidate is not a selected Sail runtime.
   Tags are never moved or deleted.
 - `archive/*`: tags retaining historical work.
 
-The qualified full-identity runtime is built from
-`cc7bbce4fdc8cf7e4256668b3ee8431343bdb6b9`; its matching Sail pin takes effect
-when the pin PR merges. Sail pins that full source commit, not the branch or
-this documentation successor. Documentation commits move the `sail` tip past
+Sail's current runtime pins (Linux and macOS, releases
+`engine-runtime-f8589ed4-linux` and `-macos`, Sail PR #267) are built from
+`f8589ed4345f147d8fb43d8cb7992921944b91f0`, tagged `pinned/f8589ed4`. Sail
+pins that full source commit, not the branch or a documentation successor. Documentation commits move the `sail` tip past
 the pinned commit; that is expected and does not affect the runtime source.
 
 ## Divergences from upstream
