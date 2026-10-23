@@ -90,6 +90,10 @@ pub enum VarIdentDisambiguate {
     // Append variants so existing serialized variant ordinals do not shift.
     VirSpecParam(usize),
     VirSpecParamRecursion { index: usize, depth: usize },
+    // Include complete signature size, retaining positional rename stability
+    // without sharing a solver constant across different signature shapes.
+    VirSpecSignatureParam { arity: usize, index: usize },
+    VirSpecSignatureParamRecursion { arity: usize, index: usize, depth: usize },
 }
 
 /// A local variable name, possibly renamed for disambiguation
