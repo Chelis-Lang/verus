@@ -491,14 +491,16 @@ pub(crate) fn check_recursive_types(krate: &Krate) -> Result<(), VirErr> {
 
     let type_sccs = global.type_graph.sort_sccs();
     for scc in &type_sccs {
-        for node in &global.type_graph.get_scc_nodes(scc) {
+        for node in global.type_graph.get_scc_nodes(*scc) {
             match node {
                 TypNode::TraitImpl(_) if global.type_graph.node_is_in_cycle(node) => {
                     return Err(type_scc_error(
                         krate,
                         &global.span_infos,
                         node,
-                        &global.type_graph.shortest_cycle_back_to_self(scc),
+                        &global.type_graph.shortest_cycle_back_to_self(
+                            global.type_graph.get_scc_nodes(*scc).next().expect("nonempty SCC"),
+                        ),
                     ));
                 }
                 _ => {}
@@ -508,7 +510,7 @@ pub(crate) fn check_recursive_types(krate: &Krate) -> Result<(), VirErr> {
         let mut converged = false;
         loop {
             let count = datatypes_well_founded.len();
-            for node in &global.type_graph.get_scc_nodes(scc) {
+            for node in global.type_graph.get_scc_nodes(*scc) {
                 if let TypNode::Datatype(Dt::Path(path)) = node {
                     let wf =
                         check_well_founded(&global.datatypes, &mut datatypes_well_founded, path);
@@ -1048,7 +1050,7 @@ pub fn check_traits(krate: &Krate, ctx: &GlobalCtx) -> Result<(), VirErr> {
     //   exists Self. (Dictionary_T<Self>, Self)
 
     for scc in ctx.func_call_sccs.iter() {
-        for node in ctx.func_call_graph.get_scc_nodes(scc).iter() {
+        for node in ctx.func_call_graph.get_scc_nodes(*scc) {
             match node {
                 // handled by decreases checking:
                 Node::Fun(_) | Node::TraitReqEns(..) => {}

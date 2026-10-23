@@ -159,7 +159,7 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         }
     }
 
-    fn sort_sccs_node(&self, visited: &mut Vec<bool>, sorted: &mut Vec<T>, s: SccId) {
+    fn sort_sccs_node(&self, visited: &mut Vec<bool>, sorted: &mut Vec<SccId>, s: SccId) {
         if visited[s] {
             return;
         }
@@ -169,15 +169,14 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
                 self.sort_sccs_node(visited, sorted, self.mapping[&self.nodes[*w].t]);
             }
         }
-        sorted.push(self.nodes[self.sccs[s].rep()].t.clone());
+        sorted.push(s);
     }
 
-    // Return vector of representatives, one for each SCC, sorted so that later
-    // elements point only to earlier elements.
-    pub fn sort_sccs(&self) -> Vec<T> {
+    // Return component IDs in dependency order. IDs belong to this graph.
+    pub fn sort_sccs(&self) -> Vec<SccId> {
         assert!(self.has_run);
         let mut visited: Vec<bool> = self.sccs.iter().map(|_| false).collect();
-        let mut sorted: Vec<T> = Vec::new();
+        let mut sorted: Vec<SccId> = Vec::new();
         for s in 0..self.sccs.len() {
             self.sort_sccs_node(&mut visited, &mut sorted, s);
         }
@@ -226,12 +225,14 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         t1 == t2 || self.get_scc_rep(t1) == self.get_scc_rep(t2)
     }
 
-    pub fn get_scc_nodes(&self, t: &T) -> Vec<T> {
+    pub fn get_scc_id(&self, t: &T) -> SccId {
         assert!(self.has_run);
-        assert!(self.mapping.contains_key(&t));
-        let id = self.mapping[t];
-        let scc = &self.sccs[id];
-        scc.nodes.iter().map(|i| self.nodes[*i].t.clone()).collect()
+        self.mapping[t]
+    }
+
+    pub fn get_scc_nodes(&self, id: SccId) -> impl ExactSizeIterator<Item = &T> {
+        assert!(self.has_run);
+        self.sccs[id].nodes.iter().map(|i| &self.nodes[*i].t)
     }
 
     pub fn shortest_cycle_back_to_self(&self, t: &T) -> Vec<T> {
@@ -358,9 +359,9 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone + std::fmt::Debug> std::fmt::Debu
         }
         if self.has_run {
             write!(f, "SCCs:\n")?;
-            let scc_reps = self.sort_sccs();
-            for scc_rep in scc_reps.iter() {
-                let nodes = self.get_scc_nodes(scc_rep);
+            let sccs = self.sort_sccs();
+            for scc in sccs {
+                let nodes = self.get_scc_nodes(scc);
                 write!(f, "{{\n")?;
                 for node in nodes {
                     write!(f, "    {:?}\n", node)?;
@@ -371,5 +372,66 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone + std::fmt::Debug> std::fmt::Debu
             write!(f, "SCC not yet run")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Graph;
+
+    fn graph() -> Graph<&'static str> {
+        let mut graph = Graph::new();
+        graph.add_edge("root", "left");
+        graph.add_edge("left", "right");
+        graph.add_edge("right", "left");
+        graph.add_edge("root", "leaf");
+        graph.add_edge("leaf", "leaf");
+        graph.add_node("isolated");
+        graph.compute_sccs();
+        graph
+    }
+
+    #[test]
+    fn component_ids_preserve_member_and_dependency_order() {
+        let graph = graph();
+        let components: Vec<Vec<_>> = graph
+            .sort_sccs()
+            .into_iter()
+            .map(|scc| graph.get_scc_nodes(scc).copied().collect())
+            .collect();
+        assert_eq!(
+            components,
+            vec![vec!["right", "left"], vec!["leaf"], vec!["root"], vec!["isolated"]],
+        );
+        assert_eq!(graph.get_scc_id(&"left"), graph.get_scc_id(&"right"));
+        assert!(graph.node_is_in_cycle(&"left"));
+        assert!(graph.node_is_in_cycle(&"leaf"));
+        assert!(!graph.node_is_in_cycle(&"isolated"));
+    }
+
+    #[test]
+    fn component_members_borrow_graph_nodes() {
+        let graph = graph();
+        let scc = graph.get_scc_id(&"left");
+        for member in graph.get_scc_nodes(scc) {
+            let original = &graph.nodes[graph.h[member]].t;
+            assert!(std::ptr::eq(member, original));
+        }
+        let cloned = graph.clone();
+        assert_eq!(cloned.get_scc_nodes(scc).copied().collect::<Vec<_>>(), vec!["right", "left"],);
+    }
+
+    #[test]
+    #[should_panic]
+    fn component_lookup_requires_completed_sccs() {
+        let graph = Graph::<u8>::new();
+        let _ = graph.get_scc_nodes(0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn component_lookup_rejects_unknown_nodes() {
+        let graph = graph();
+        let _ = graph.get_scc_id(&"missing");
     }
 }

@@ -61,7 +61,7 @@ pub struct GlobalCtx {
     /// Used for synthesized AST nodes that have no relation to any location in the original code:
     pub(crate) no_span: Span,
     pub func_call_graph: Arc<Graph<Node>>,
-    pub func_call_sccs: Arc<Vec<Node>>,
+    pub func_call_sccs: Arc<Vec<usize>>,
     pub(crate) datatype_graph: Arc<Graph<crate::recursive_types::TypNode>>,
     pub(crate) datatype_graph_span_infos: Vec<Span>,
     pub trait_impl_to_extensions: HashMap<Path, Vec<Path>>,
@@ -580,28 +580,34 @@ impl GlobalCtx {
         let mut preliminary_call_graph = func_call_graph.graph.clone();
         preliminary_call_graph.compute_sccs();
         let preliminary_sccs = preliminary_call_graph.sort_sccs();
-        let order: HashMap<Node, usize> =
-            preliminary_sccs.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
+        let order: HashMap<Node, usize> = preliminary_sccs
+            .iter()
+            .enumerate()
+            .map(|(i, scc)| {
+                let rep = preliminary_call_graph.get_scc_nodes(*scc).next().expect("nonempty SCC");
+                (rep.clone(), i)
+            })
+            .collect();
         for scc in preliminary_sccs {
-            for node_f4 in preliminary_call_graph.get_scc_nodes(&scc) {
-                if !matches!(&node_f4, Node::Fun(_)) {
+            for node_f4 in preliminary_call_graph.get_scc_nodes(scc) {
+                if !matches!(node_f4, Node::Fun(_)) {
                     continue;
                 }
                 use crate::recursion::get_edges_from;
-                'f1: for node_f1 in get_edges_from(&preliminary_call_graph, &node_f4) {
+                'f1: for node_f1 in get_edges_from(&preliminary_call_graph, node_f4) {
                     if let Node::Fun(f1) = &node_f1 {
                         if let Some(trait_impl) = method_impl_map.get(f1) {
                             let impl_path = ImplPath::TraitImplPath(trait_impl.clone());
                             let trait_impl = Node::TraitImpl(impl_path);
                             let trait_impl = func_call_graph.replace(trait_impl);
                             // Do we already have f4 --> trait_impl?
-                            for ti in get_edges_from(&func_call_graph.graph, &node_f4) {
+                            for ti in get_edges_from(&func_call_graph.graph, node_f4) {
                                 if *ti == trait_impl {
                                     continue 'f1;
                                 }
                             }
                             // Is there a path trait_impl --*--> f4?
-                            if preliminary_call_graph.can_reach(&trait_impl, &node_f4, Some(&order))
+                            if preliminary_call_graph.can_reach(&trait_impl, node_f4, Some(&order))
                             {
                                 continue 'f1;
                             }
@@ -699,10 +705,11 @@ impl GlobalCtx {
         for f in &krate.functions {
             let f_node = Node::Fun(f.x.name.clone());
             if f.x.attrs.is_decrease_by {
-                for g_node in func_call_graph.get_scc_nodes(&f_node) {
-                    if f_node != g_node {
+                let scc = func_call_graph.get_scc_id(&f_node);
+                for g_node in func_call_graph.get_scc_nodes(scc) {
+                    if &f_node != g_node {
                         let g_opt =
-                            krate.functions.iter().find(|g| Node::Fun(g.x.name.clone()) == g_node);
+                            krate.functions.iter().find(|g| Node::Fun(g.x.name.clone()) == *g_node);
                         let mut error = crate::messages::error(
                             &f.span,
                             "found cyclic dependency in decreases_by function",
