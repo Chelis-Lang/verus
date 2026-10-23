@@ -535,13 +535,20 @@ pub fn rename_rec_param(ident: &VarIdent, n: usize) -> VarIdent {
         | VarIdentDisambiguate::VirSpecParamRecursion { index, .. } => {
             VarIdentDisambiguate::VirSpecParamRecursion { index, depth: n }
         }
+        VarIdentDisambiguate::VirSpecSignatureParam { arity, index }
+        | VarIdentDisambiguate::VirSpecSignatureParamRecursion { arity, index, .. } => {
+            VarIdentDisambiguate::VirSpecSignatureParamRecursion { arity, index, depth: n }
+        }
         _ => VarIdentDisambiguate::VirParamRecursion(n),
     };
     crate::ast::VarIdent(ident.0.clone(), dis)
 }
 
-pub(crate) fn spec_param_name(ident: &VarIdent, index: usize) -> VarIdent {
-    crate::ast::VarIdent(ident.0.clone(), crate::ast::VarIdentDisambiguate::VirSpecParam(index))
+pub(crate) fn spec_param_name(ident: &VarIdent, index: usize, arity: usize) -> VarIdent {
+    crate::ast::VarIdent(
+        ident.0.clone(),
+        crate::ast::VarIdentDisambiguate::VirSpecSignatureParam { arity, index },
+    )
 }
 
 pub fn slice_type() -> Path {
@@ -1391,6 +1398,19 @@ pub fn unique_var_name(
             write!(&mut out, "{}{}{}{}", PREFIX_SPEC_PARAM, index, SUFFIX_REC_PARAM, depth)
                 .unwrap();
         }
+        VarIdentDisambiguate::VirSpecSignatureParam { arity, index } => {
+            out.clear();
+            write!(&mut out, "{}{}%{}{}", PREFIX_SPEC_PARAM, arity, index, SUFFIX_PARAM).unwrap();
+        }
+        VarIdentDisambiguate::VirSpecSignatureParamRecursion { arity, index, depth } => {
+            out.clear();
+            write!(
+                &mut out,
+                "{}{}%{}{}{}",
+                PREFIX_SPEC_PARAM, arity, index, SUFFIX_REC_PARAM, depth
+            )
+            .unwrap();
+        }
     }
     out
 }
@@ -1496,21 +1516,27 @@ mod spec_parameter_name_tests {
 
     #[test]
     fn spec_parameter_position_is_stable_without_losing_source_spelling() {
-        let before = spec_param_name(&source("before"), 0);
-        let after = spec_param_name(&source("after"), 0);
-        assert_eq!(&*before.lower(), "spec%param%0!");
+        let before = spec_param_name(&source("before"), 0, 3);
+        let after = spec_param_name(&source("after"), 0, 3);
+        assert_eq!(&*before.lower(), "spec%param%3%0!");
         assert_eq!(before.lower(), after.lower());
         assert_eq!(user_local_name(&before), "before");
         assert_eq!(user_local_name(&after), "after");
-        assert_ne!(before.lower(), spec_param_name(&source("before"), 1).lower());
+        assert_ne!(before.lower(), spec_param_name(&source("before"), 1, 3).lower());
+        // A position in a different complete signature has a different name.
+        assert_ne!(before.lower(), spec_param_name(&source("before"), 0, 1).lower());
+        assert_eq!(
+            spec_param_name(&source("unused"), 0, 1).lower(),
+            spec_param_name(&source("renamed"), 0, 1).lower(),
+        );
     }
 
     #[test]
     fn recursive_copies_retain_parameter_positions_and_separate_depths() {
-        let before = spec_param_name(&source("before"), 2);
-        let after = spec_param_name(&source("after"), 2);
+        let before = spec_param_name(&source("before"), 2, 3);
+        let after = spec_param_name(&source("after"), 2, 3);
         assert_eq!(rename_rec_param(&before, 1).lower(), rename_rec_param(&after, 1).lower());
-        assert_eq!(&*rename_rec_param(&before, 1).lower(), "spec%param%2!$1");
+        assert_eq!(&*rename_rec_param(&before, 1).lower(), "spec%param%3%2!$1");
         assert_ne!(rename_rec_param(&before, 1).lower(), rename_rec_param(&before, 2).lower());
         assert_eq!(
             rename_rec_param(&rename_rec_param(&before, 1), 2).lower(),
@@ -1527,11 +1553,11 @@ mod spec_parameter_name_tests {
         let names: Vec<_> = ["used", "unused", "last"]
             .iter()
             .enumerate()
-            .map(|(index, name)| spec_param_name(&source(name), index).lower())
+            .map(|(index, name)| spec_param_name(&source(name), index, 3).lower())
             .collect();
-        assert_eq!(&*names[0], "spec%param%0!");
-        assert_eq!(&*names[1], "spec%param%1!");
-        assert_eq!(&*names[2], "spec%param%2!");
+        assert_eq!(&*names[0], "spec%param%3%0!");
+        assert_eq!(&*names[1], "spec%param%3%1!");
+        assert_eq!(&*names[2], "spec%param%3%2!");
         assert_ne!(names[0], names[1]);
         assert_ne!(names[0], names[2]);
         assert_ne!(

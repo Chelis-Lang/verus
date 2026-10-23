@@ -10,6 +10,22 @@ Sail ADRs, `VI-NNNN` issue entries and Sail paths point into it.)
 releases and contributions) use upstream
 [verus-lang/verus](https://github.com/verus-lang/verus).
 
+## Candidate correction: signature-scoped spec formals
+
+The candidate names spec formals by complete signature size and position,
+including unused parameters. Source spelling is still retained for diagnostics;
+ordinary proof/exec parameters, nested binders and function identities retain
+their existing lowering. Recursive copies preserve signature size and depth.
+
+This addresses Sail issue #337: in a captured macOS HumanEval edit loop,
+position-only formal names in earlier termination checks make the pinned Z3
+return `unknown` (incomplete quantifiers) for a later proof that stock proves.
+Bare-fork controls reproduce the loss without Sail or a cache. Offline replay
+isolates the earlier termination context; signature-scoped names recover the
+proof while retaining source-rename stability. Compiler-level and full corpus
+qualification are required before selecting this candidate. No Sail query
+normalization, solver flag change or accepted verdict exception is introduced.
+
 ## Where to report problems
 
 - Problems in Verus itself: upstream

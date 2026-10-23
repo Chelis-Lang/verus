@@ -1281,7 +1281,7 @@ fn simplify_function(
             // body, spliced into its parameter scope during AST-to-SST lowering.
             // Its corresponding formals must therefore use the same positions.
             let name = if functionx.mode == Mode::Spec || functionx.attrs.is_decrease_by {
-                crate::def::spec_param_name(&prev, index)
+                crate::def::spec_param_name(&prev, index, functionx.params.len())
             } else {
                 VarIdent(prev.0.clone(), crate::ast::VarIdentDisambiguate::VirParam)
             };
