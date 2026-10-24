@@ -270,6 +270,11 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
         }
     }
 
+    // Membership is queried for each variable use; indexing avoids repeatedly
+    // scanning the complete hint vector. Traversal order stays unchanged.
+    let shadow_check_ids: vir::sail_hash::HashSet<HirId> =
+        erasure_hints.shadow_check.iter().copied().collect();
+
     let mut locals = HashMap::<HirId, VarErasure>::new();
     for (span, (var_mode, mode)) in erasure_modes.local_modes.iter() {
         if crate::spans::from_raw_span(&span.raw_span).is_none() {
@@ -286,7 +291,7 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
         for hir_id in &local_id_to_hir[&span.id] {
             locals.insert(
                 *hir_id,
-                mode_to_var_erase(*var_mode, *mode, erasure_hints.shadow_check.contains(hir_id)),
+                mode_to_var_erase(*var_mode, *mode, shadow_check_ids.contains(hir_id)),
             );
         }
     }
