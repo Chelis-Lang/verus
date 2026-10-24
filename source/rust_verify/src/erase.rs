@@ -3,9 +3,6 @@ use vir::messages::AstId;
 use rustc_hir::HirId;
 
 use crate::context::ErasureInfo;
-use vir::ast::{Datatype, Dt, Fun, Function, Krate, Mode, Path};
-use vir::modes::ErasureModes;
-
 use crate::verus_items::{DummyCaptureItem, VerusItem, VerusItems};
 use rustc_hir::def_id::LocalDefId;
 use rustc_mir_build_verus::verus::{
@@ -17,6 +14,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use vir::ast::VirErr;
+use vir::ast::{Datatype, Dt, Fun, Function, Krate, Mode, Path};
+use vir::modes::ErasureModes;
+use vir::sail_hash::HashSet as FxHashSet;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MiscCall {
@@ -269,12 +269,7 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
             ctor_id_to_hir.get_mut(vir_id).unwrap().push(*hir_id);
         }
     }
-
-    // Membership is queried for each variable use; indexing avoids repeatedly
-    // scanning the complete hint vector. Traversal order stays unchanged.
-    let shadow_check_ids: vir::sail_hash::HashSet<HirId> =
-        erasure_hints.shadow_check.iter().copied().collect();
-
+    let shadow_check_ids: FxHashSet<_> = erasure_hints.shadow_check.iter().copied().collect();
     let mut locals = HashMap::<HirId, VarErasure>::new();
     for (span, (var_mode, mode)) in erasure_modes.local_modes.iter() {
         if crate::spans::from_raw_span(&span.raw_span).is_none() {
