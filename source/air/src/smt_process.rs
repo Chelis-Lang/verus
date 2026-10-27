@@ -101,21 +101,23 @@ fn reader_thread(
 
 impl SmtProcess {
     pub fn launch(solver: &SmtSolver, transcript_log: Option<Box<dyn std::io::Write>>) -> Self {
+        Self::launch_with_private_configuration(solver, None, transcript_log)
+    }
+
+    /// Apply explicit settings to this actual solver child only. This parameter
+    /// neither installs compiler controls nor authenticates its provider.
+    pub fn launch_with_private_configuration(
+        solver: &SmtSolver,
+        private: Option<&crate::private_solver::PrivateSolverLaunch>,
+        transcript_log: Option<Box<dyn std::io::Write>>,
+    ) -> Self {
         let solver_info = SolverInfo::new(solver);
-        let mut child = match std::process::Command::new(solver_info.executable())
-            .args(match solver {
-                SmtSolver::Z3 => vec!["-smt2", "-in"],
-                SmtSolver::Cvc5 => vec![
-                    "--no-interactive",    // We don't need a human interface
-                    "--produce-models",    // Needed for error reporting
-                    "--quant-dsplit=none", // Recommended by Andrew Reynolds (@ajreynol)
-                    "--no-cbqi",           // Recommended by Andrew Reynolds (@ajreynol)
-                    "--user-pat=strict",   // Recommended by Andrew Reynolds (@ajreynol)
-                ],
-            })
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
+        let mut child = match crate::private_solver::command(solver, private, || {
+            solver_info.executable().into()
+        })
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
         {
             Ok(child) => child,
             Err(err) => {

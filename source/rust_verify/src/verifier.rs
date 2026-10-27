@@ -318,6 +318,9 @@ pub struct Verifier {
     /// Functions that failed to verify
     pub func_fails: HashSet<Fun>,
     pub args: Args,
+    // Separate from ArgsX: no public flag or compiler environment is changed.
+    // Normal command entrypoints do not install this in-memory configuration.
+    private_solver_launch: Option<air::private_solver::PrivateSolverLaunch>,
     pub user_filter: Option<UserFilter>,
     /// The complete merged VIR from before crate pruning and external-trait
     /// demotion (upstream kept it in `erasure_hints` until #3095). Sail's
@@ -529,6 +532,19 @@ impl Verifier {
         via_cargo_compile: bool,
         dep_tracker: crate::cargo_verus_dep_tracker::DepTracker,
     ) -> Verifier {
+        Self::new_with_private_solver(args, via_cargo_args, via_cargo_compile, dep_tracker, None)
+    }
+
+    /// Construct with solver-child-only settings retained outside ArgsX. This
+    /// parameter is not an authenticated compiler invocation or proof token;
+    /// the caller must establish its own original request and launch identity.
+    pub fn new_with_private_solver(
+        args: Args,
+        via_cargo_args: Option<CargoVerusArgs>,
+        via_cargo_compile: bool,
+        dep_tracker: crate::cargo_verus_dep_tracker::DepTracker,
+        private_solver_launch: Option<air::private_solver::PrivateSolverLaunch>,
+    ) -> Verifier {
         let compile = args.compile || via_cargo_compile;
 
         Verifier {
@@ -539,6 +555,7 @@ impl Verifier {
             count_errors: 0,
             func_fails: HashSet::new(),
             args,
+            private_solver_launch,
             user_filter: None,
             sail_unpruned_crate: None,
             verus_items: None,
@@ -588,6 +605,7 @@ impl Verifier {
             count_errors: 0,
             func_fails: HashSet::new(),
             args: self.args.clone(),
+            private_solver_launch: self.private_solver_launch.clone(),
             user_filter: self.user_filter.clone(),
             sail_unpruned_crate: self.sail_unpruned_crate.clone(),
             verus_items: self.verus_items.clone(),
@@ -1207,10 +1225,11 @@ impl Verifier {
         profile_file_name: Option<&std::path::PathBuf>,
         prover_choice: vir::def::ProverChoice,
     ) -> Result<air::context::Context, VirErr> {
-        let mut air_context = air::context::Context::new_with_encoding(
+        let mut air_context = air::context::Context::new_with_private_solver(
             message_interface.clone(),
             self.args.solver,
             self.args.smt_encoding,
+            self.private_solver_launch.clone(),
         );
         air_context.set_ignore_unexpected_smt(self.args.ignore_unexpected_smt);
         air_context.set_debug(self.args.debugger);

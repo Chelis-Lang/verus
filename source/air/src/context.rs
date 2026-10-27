@@ -115,6 +115,7 @@ impl Default for SmtEncoding {
 pub struct Context {
     pub(crate) message_interface: Arc<dyn crate::messages::MessageInterface>,
     smt_process: Option<SmtProcess>,
+    private_solver_launch: Option<crate::private_solver::PrivateSolverLaunch>,
     pub(crate) axiom_infos: ScopeMap<Ident, Arc<AxiomInfo>>,
     pub(crate) axiom_infos_count: u64,
     pub(crate) array_map: ScopeMap<ClosureTerm, Ident>,
@@ -160,9 +161,21 @@ impl Context {
         solver: SmtSolver,
         smt_encoding: SmtEncoding,
     ) -> Self {
+        Self::new_with_private_solver(message_interface, solver, smt_encoding, None)
+    }
+
+    /// Retain explicit solver-child settings without changing compiler globals
+    /// or normal AIR/solver options. The caller owns configuration provenance.
+    pub fn new_with_private_solver(
+        message_interface: Arc<dyn crate::messages::MessageInterface>,
+        solver: SmtSolver,
+        smt_encoding: SmtEncoding,
+        private_solver_launch: Option<crate::private_solver::PrivateSolverLaunch>,
+    ) -> Self {
         let mut context = Context {
             message_interface: message_interface.clone(),
             smt_process: None,
+            private_solver_launch,
             axiom_infos: ScopeMap::new(),
             axiom_infos_count: 0,
             array_map: ScopeMap::new(),
@@ -236,7 +249,11 @@ impl Context {
         // Only start the smt process if there are queries to run
         if self.smt_process.is_none() {
             let transcript_log = self.smt_transcript_log.take();
-            self.smt_process = Some(SmtProcess::launch(&self.solver, transcript_log));
+            self.smt_process = Some(SmtProcess::launch_with_private_configuration(
+                &self.solver,
+                self.private_solver_launch.as_ref(),
+                transcript_log,
+            ));
         }
         self.smt_process.as_mut().unwrap()
     }
