@@ -3334,7 +3334,7 @@ impl rustc_driver::Callbacks for VerifierCallbacksEraseMacro {
             }
         }
 
-        rustc_interface::passes::write_dep_info(tcx);
+        crate::sail_compiler_inputs::write_dep_info(tcx);
         self.verifier.crate_id = Some(mk_crate_id(tcx, LOCAL_CRATE));
 
         let time_import0 = Instant::now();
