@@ -102,6 +102,16 @@ must still check the actual child, full proof result and complete input model.
 Absent the request, no observation is made. This experiment is not a selected
 Sail runtime or a qualified prebuilt-vstd release.
 
+The compiler-read candidate for Sail #551 uses schema 2: the Cargo driver's
+own common-option declaration is retained separately in `driver_environment`,
+while each actual phase's `tracked_environment` preserves explicit source and
+macro reads of that variable, including absent and empty values. The driver
+declaration is inserted only for its synchronous dep-info write and removed
+again before source-read capture. Unknown driver origin or conflicting values
+cannot produce a complete reusable observation. This producer does not grant
+proof reuse; Sail's schema-2 consumers conservatively refuse source reads of
+the common channel. Runtime selection and complete qualification are separate.
+
 The separate `SAIL_NATIVE_COMPILER_INPUTS` request, with
 `SAIL_NATIVE_COMPILER_INPUTS_BINDING`, observes Cargo's ordinary native Rust
 path. Its genuine `after_analysis` callback captures one compiler source map,

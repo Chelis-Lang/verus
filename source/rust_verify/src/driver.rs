@@ -287,6 +287,7 @@ pub fn run(
     verus_root: Option<VerusRoot>,
     build_test_mode: bool,
 ) -> (Verifier, Stats, Result<(), ()>) {
+    crate::sail_compiler_inputs::begin_driver_environment(verifier.via_cargo_args.is_some());
     if !rustc_args.iter().any(|a| a.starts_with("--edition")) {
         rustc_args.push(format!("--edition"));
         rustc_args.push(format!("2021"));

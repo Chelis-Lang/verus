@@ -41,8 +41,13 @@ impl DepTracker {
         self.files.insert(path);
     }
 
-    pub(crate) fn config_install(self, config: &mut rustc_interface::Config) {
+    pub(crate) fn config_install(mut self, config: &mut rustc_interface::Config) {
+        // Keep the driver's own declaration separate from actual source and
+        // macro reads. Inserting it before expansion would deduplicate an
+        // explicit env!/option_env! read of the same value (Sail #551).
+        let common = self.env.remove(crate::cargo_verus::VERUS_DRIVER_ARGS);
         config.track_state = Some(Box::new(move |sess| {
+            crate::sail_compiler_inputs::driver_common(common);
             for (var, val) in self.env.iter() {
                 sess.env_depinfo
                     .borrow_mut()
