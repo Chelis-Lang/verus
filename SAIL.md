@@ -2,9 +2,9 @@
 
 This repository is a fork of [Verus](https://github.com/verus-lang/verus)
 maintained for [Sail](https://github.com/Chelis-Lang/sail), a service that sits
-between Verus and its pinned Z3 to make verification fast and stable. (The Sail
-repository is private until Sail's open-source release; references below to
-Sail ADRs, `VI-NNNN` issue entries and Sail paths point into it.)
+between Verus and its pinned Z3 to make verification fast and stable.
+References below to Sail ADRs, `VI-NNNN` issue entries and Sail paths point
+into the [Sail repository](https://github.com/Chelis-Lang/sail).
 
 "Stock" here means unmodified upstream Verus. For Verus itself (documentation,
 releases and contributions) use upstream
@@ -71,8 +71,9 @@ preceding commit's; this kind of change is not yet named by ADR 0039 (a
 note records it, owner review pending).
 
 Anything that would change a verdict needs its own Sail ADR. Each fix is
-tracked as a `VI-NNNN` entry in Sail's `docs/verus-issues/` (private Sail
-repository), with a reproduction. Fixes are not proposed upstream.
+tracked as a `VI-NNNN` entry in Sail's
+[`docs/verus-issues/`](https://github.com/Chelis-Lang/sail/tree/main/docs/verus-issues),
+with a reproduction. Fixes are not proposed upstream.
 
 The unselected VI-0023 candidate extends this policy under proposed Sail
 ADR 0054: spec formal parameters receive reserved solver names by position,
