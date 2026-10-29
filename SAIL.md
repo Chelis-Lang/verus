@@ -183,6 +183,27 @@ diagnostic matrix, named literal-SMT census, controlled raw crate-ID/root
 variation, determinism and full corpus qualification remain required before
 selection. This candidate is not a selected Sail runtime.
 
+## SCC traversal performance candidate
+
+This local candidate uses graph-local integer IDs for strongly connected
+components instead of cloned representative nodes.
+[`Graph::sort_sccs`](source/vir/src/scc.rs) retains the existing dependency order.
+`Graph::get_scc_nodes` borrows members in the existing component order.
+Member traversal needs no node hash, node clone, or result-vector allocation.
+An ID belongs to its graph or an identical graph clone.
+
+[`OpGenerator`](source/rust_verify/src/commands.rs) shares its existing function
+vector between specification declarations and proof checks for one component.
+Delayed specification axioms and trait axioms remain after the same proof checks.
+The change does not alter Tarjan traversal, bucket roots, function filters,
+solver options, or full-root verification.
+
+The graph controls cover dependency order, member order, cycles, isolated nodes,
+borrowed members, graph clones, and invalid lookup states.
+Runtime selection remains unchanged.
+Native performance and differential checks apply to private development builds,
+not a published runtime or a release-performance claim.
+
 ## Branches and tags
 
 - `upstream/<short sha>`: an unmodified upstream Verus commit used as a base,
