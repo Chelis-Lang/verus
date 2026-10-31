@@ -1595,6 +1595,11 @@ impl Verifier {
                                 == vir::def::ProverChoice::Nonlinear)
                                 || (cmds.prover_choice == vir::def::ProverChoice::BitVector)
                                 || *profile_rerun
+                                // VI-0040: completed spec termination checks can
+                                // change a later query's incomplete-quantifier
+                                // outcome despite push/pop. Keep their solver
+                                // history out of the ordinary proof context.
+                                || matches!(query_op, QueryOp::SpecTermination)
                                 || self.args.spinoff_all;
 
                             let profile_file_name = if *profile_rerun
@@ -1630,6 +1635,8 @@ impl Verifier {
                                     "bitvector"
                                 } else if *profile_rerun {
                                     "profile_rerun"
+                                } else if matches!(query_op, QueryOp::SpecTermination) {
+                                    "spec_termination"
                                 } else {
                                     "spinoff_all"
                                 };

@@ -26,6 +26,24 @@ proof while retaining source-rename stability. Compiler-level and full corpus
 qualification are required before selecting this candidate. No Sail query
 normalization, solver flag change or accepted verdict exception is introduced.
 
+## Candidate correction: isolated specification termination checks
+
+The VI-0040 candidate uses the existing spinoff solver mechanism for
+specification termination checks. Each receives the complete existing bucket
+context, original commands and limits; its solver history stays separate from
+ordinary proof queries. Nonrecursive specifications without a termination
+query and ordinary proofs retain their existing route. The unchanged Mac
+abstract-domain proof has identical stock/fork query bytes, but the fork's
+earlier termination-check history changes the pinned Z3 result to `unknown`
+with `incomplete quantifiers`. Literal replay recovers `unsat` by removing just
+those two earlier completed scopes, without changing the later proof.
+
+Sail ADR 0094 records this proposed execution-strategy extension to ADR 0039.
+The compiler candidate is not a selected Sail runtime. It needs the original
+full-package reproduction, previous regressions, complete corpus/source-suite
+qualification and measured startup/context costs before selection. No query
+normalization, resource increase or preferred-answer retry is introduced.
+
 ## Where to report problems
 
 - Problems in Verus itself: upstream
