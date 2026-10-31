@@ -103,7 +103,7 @@ fn sail_vi0040_one_companion_receives_later_definitions() {
 }
 
 test_verify_one_file! {
-    #[test] sail_vi0040_a_false_termination_check_still_fails => verus_code! {
+    #[test] sail_vi0040_a_false_termination_check_still_fails verus_code! {
         spec fn spin(n: nat) -> nat decreases n { spin(n) }
     } => Err(err) => assert_one_fails(err)
 }
