@@ -1430,6 +1430,12 @@ impl Verifier {
 
         let mut spunoff_time_smt_init = Duration::ZERO;
         let mut spunoff_time_smt_run = Duration::ZERO;
+        // One lazily created companion context per bucket. Replaying a growing
+        // bucket from scratch for every recursive spec would be quadratic.
+        // Each later context batch reaches this companion at most once.
+        let mut spec_termination_context: Option<air::context::Context> = None;
+        let mut spec_termination_cursor = 0;
+        let mut spec_termination_profile = None;
         let mut spunoff_rlimit_count: Option<(u64, u64)> = match self.args.solver {
             SmtSolver::Z3 => Some((0, 0)),
             SmtSolver::Cvc5 => None,
@@ -1595,12 +1601,9 @@ impl Verifier {
                                 == vir::def::ProverChoice::Nonlinear)
                                 || (cmds.prover_choice == vir::def::ProverChoice::BitVector)
                                 || *profile_rerun
-                                // VI-0040: completed spec termination checks can
-                                // change a later query's incomplete-quantifier
-                                // outcome despite push/pop. Keep their solver
-                                // history out of the ordinary proof context.
-                                || matches!(query_op, QueryOp::SpecTermination)
                                 || self.args.spinoff_all;
+                            let shared_termination = matches!(query_op, QueryOp::SpecTermination)
+                                && cmds.prover_choice == vir::def::ProverChoice::DefaultProver;
 
                             let profile_file_name = if *profile_rerun
                                 || ((self.args.profile_all || self.args.capture_profiles)
@@ -1635,8 +1638,6 @@ impl Verifier {
                                     "bitvector"
                                 } else if *profile_rerun {
                                     "profile_rerun"
-                                } else if matches!(query_op, QueryOp::SpecTermination) {
-                                    "spec_termination"
                                 } else {
                                     "spinoff_all"
                                 };
@@ -1664,6 +1665,54 @@ impl Verifier {
                                 );
                                 spinoff_context_counter += 1;
                                 &mut spinoff_context
+                            } else if shared_termination {
+                                if spec_termination_context.is_none() {
+                                    // Counter zero is reserved for the shared
+                                    // termination stream; explicit spinoffs
+                                    // keep their existing counters from one.
+                                    if self.args.profile_all || self.args.capture_profiles {
+                                        let directory = self.ensure_solver_log_dir()?;
+                                        spec_termination_profile = Some(self.log_file_name(
+                                            &directory,
+                                            Some(bucket_id),
+                                            Self::log_file_name_suffix(
+                                                function_opgen.ctx(),
+                                                false,
+                                                Some((&function.x.name.path, 0)),
+                                                false,
+                                                crate::config::PROFILE_FILE_SUFFIX,
+                                            ).as_str(),
+                                        ));
+                                    }
+                                    spec_termination_context = Some(self.new_air_context_with_bucket_context(
+                                        message_interface.clone(),
+                                        function_opgen.ctx(),
+                                        reporter,
+                                        bucket_id,
+                                        Some((&function.x.name.path, 0)),
+                                        &bucket_context,
+                                        false,
+                                        &cmds.context.span,
+                                        spec_termination_profile.as_ref(),
+                                        "spec_termination",
+                                        vir::def::ProverChoice::DefaultProver,
+                                    )?);
+                                    spec_termination_cursor = bucket_context.len();
+                                }
+                                let context = spec_termination_context.as_mut().ok_or_else(|| {
+                                    vir::messages::error(&cmds.context.span, "internal error: missing spec termination context")
+                                })?;
+                                // Definitions admitted since the previous
+                                // termination query remain part of the exact
+                                // current bucket, including recursive SCCs.
+                                let pending = bucket_context.get(spec_termination_cursor..).ok_or_else(|| {
+                                    vir::messages::error(&cmds.context.span, "internal error: invalid spec termination context cursor")
+                                })?;
+                                for batch in pending {
+                                    self.run_command_batch(bucket_id, reporter, context, batch);
+                                }
+                                spec_termination_cursor = bucket_context.len();
+                                context
                             } else {
                                 &mut air_context
                             };
@@ -1923,13 +1972,36 @@ impl Verifier {
                 }
             }
         }
-        // if spinning off all, the regular profile loop inside has already profiled everything
+        // The persistent companion contributes its complete totals exactly
+        // once, including incremental context loading between its queries.
+        if let Some(context) = &spec_termination_context {
+            let (init, run) = context.get_time();
+            spunoff_time_smt_init += init;
+            spunoff_time_smt_run += run;
+            if let Some(total) = &mut spunoff_rlimit_count {
+                let (init, run) = context.get_rlimit_count().expect("termination context rlimit");
+                total.0 += init;
+                total.1 += run;
+            }
+        }
+        // If spinning off all, the regular profile loop inside has already
+        // profiled everything. Otherwise combine the two independent streams
+        // into the original single bucket report and graph.
         if let (Some(profile_all_file_name), false) = (profile_all_file_name, self.args.spinoff_all)
         {
+            let mut profiles = Vec::new();
             if air_context.check_valid_used() {
-                match Profiler::parse(
+                profiles.push(profile_all_file_name.as_path());
+            }
+            if spec_termination_context.as_ref().is_some_and(|context| context.check_valid_used()) {
+                if let Some(profile) = &spec_termination_profile {
+                    profiles.push(profile.as_path());
+                }
+            }
+            if !profiles.is_empty() {
+                match Profiler::parse_many(
                     message_interface.clone(),
-                    &profile_all_file_name,
+                    &profiles,
                     Some(&bucket_id.friendly_name()),
                     reporter,
                 ) {

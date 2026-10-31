@@ -29,9 +29,13 @@ normalization, solver flag change or accepted verdict exception is introduced.
 ## Candidate correction: isolated specification termination checks
 
 The VI-0040 candidate uses the existing spinoff solver mechanism for
-specification termination checks. Each receives the complete existing bucket
-context, original commands and limits; its solver history stays separate from
-ordinary proof queries. Nonrecursive specifications without a termination
+specification termination checks. One lazy companion solver per bucket receives
+the complete context before its first check and only newly admitted context
+batches thereafter. Every context batch is loaded at most twice overall; extra
+context parsing does not grow quadratically with the number of checks. The
+original commands and limits remain intact; termination solver history stays
+separate from ordinary proof queries. Both streams contribute their complete
+timing/resource totals and a combined bucket profile with disjoint graph nodes. Nonrecursive specifications without a termination
 query and ordinary proofs retain their existing route. The unchanged Mac
 abstract-domain proof has identical stock/fork query bytes, but the fork's
 earlier termination-check history changes the pinned Z3 result to `unknown`

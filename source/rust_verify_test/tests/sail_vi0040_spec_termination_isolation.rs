@@ -69,6 +69,39 @@ fn sail_vi0040_nonrecursive_specs_keep_the_existing_solver_context() {
     assert!(logs.iter().all(|text| !text.contains("query spun off because:")));
 }
 
+#[test]
+fn sail_vi0040_one_companion_receives_later_definitions() {
+    let code = verus_code_str! {
+        open spec fn first(n: nat) -> nat decreases n {
+            if n == 0 { 0 } else { first((n - 1) as nat) }
+        }
+        open spec fn measure(n: nat) -> nat { n + first(n) * 0 }
+        open spec fn second(n: nat) -> nat decreases measure(n) {
+            if n == 0 { 0 } else { second((n - 1) as nat) }
+        }
+        proof fn check() {
+            reveal_with_fuel(first, 2);
+            reveal_with_fuel(second, 2);
+            assert(first(1) == 0);
+            assert(second(1) == 0);
+        }
+    };
+    let logs = logged(code.to_owned(), "sail_vi0040_one_companion_receives_later_definitions");
+    let isolated: Vec<_> =
+        logs.iter().filter(|text| text.contains(";; Spec-Termination ")).collect();
+    assert_eq!(isolated.len(), 1, "termination checks share one extra solver stream");
+    let text = isolated[0];
+    assert!(text.contains("query spun off because: spec_termination"));
+    assert_eq!(text.matches("(check-sat)").count(), 2);
+    let first = text.find(";; Spec-Termination test_crate::first").expect("first termination");
+    let later = text.find(";; Function-Def test_crate::measure").expect("later definition");
+    let second = text.find(";; Spec-Termination test_crate::second").expect("second termination");
+    assert!(
+        first < later && later < second,
+        "the companion must receive newly admitted definitions"
+    );
+}
+
 test_verify_one_file! {
     #[test] sail_vi0040_a_false_termination_check_still_fails => verus_code! {
         spec fn spin(n: nat) -> nat decreases n { spin(n) }
