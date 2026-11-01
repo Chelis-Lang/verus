@@ -127,6 +127,15 @@ must still check the actual child, full proof result and complete input model.
 Absent the request, no observation is made. This experiment is not a selected
 Sail runtime or a qualified prebuilt-vstd release.
 
+The VI-0041 correction (Sail #599) binds source observations to bytes returned
+by the actual file loader. Rustc represents non-UTF-8 binary includes with dummy
+empty source-map text; those records now retain the real binary digest and raw
+length. Text source-map checksums must agree with the loader's original read.
+Missing coverage, conflicting reads and unknown paths withhold observation;
+paths are never reopened to stand in for earlier compiler bytes. Relative source
+spellings and both verification/compilation callbacks are covered. Native runtime
+and whole-corpus qualification remain separate from the producer's unit controls.
+
 The compiler-read candidate for Sail #551 uses schema 2: the Cargo driver's
 own common-option declaration is retained separately in `driver_environment`,
 while each actual phase's `tracked_environment` preserves explicit source and

@@ -1,15 +1,18 @@
 //! Optional compiler-read observations for Sail's disabled vstd experiment.
 //!
-//! Hashes come from rustc's source map, never reopened dep-info paths.
+//! Hashes bind actual loader bytes, checked against rustc's source map; paths
+//! are never reopened to stand in for earlier compiler reads.
 //! Verification and erased compilation are distinct actual source reads.
 //! Observations remain in process memory until both phases complete. Missing,
 //! duplicate or failed phases cannot produce a complete final observation.
 
+use rustc_span::source_map::{FileLoader, RealFileLoader};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rustc_middle::ty::TyCtxt;
 use rustc_session::Session;
@@ -38,7 +41,116 @@ static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 // distinct, explicitly declared protocol read.
 static DRIVER_ENVIRONMENT: Mutex<Option<BTreeMap<String, Option<String>>>> = Mutex::new(None);
 
+#[derive(Clone, PartialEq, Eq)]
+struct LoadedFile {
+    checksum: String,
+    size: usize,
+    text: bool,
+    non_utf8: bool,
+}
+
+#[derive(Default)]
+struct LoadedInputs {
+    directory: Option<PathBuf>,
+    active: bool,
+    failed: bool,
+    files: BTreeMap<String, LoadedFile>,
+}
+
+static LOADED: Mutex<LoadedInputs> = Mutex::new(LoadedInputs {
+    directory: None,
+    active: false,
+    failed: false,
+    files: BTreeMap::new(),
+});
+
+impl LoadedInputs {
+    fn insert(&mut self, name: Option<String>, bytes: &[u8], text: bool) {
+        if self.failed {
+            return;
+        }
+        let Some(name) = name else {
+            self.failed = true;
+            return;
+        };
+        let read = LoadedFile {
+            checksum: format!("sha256={}", hex::encode(Sha256::digest(bytes))),
+            size: bytes.len(),
+            text,
+            non_utf8: std::str::from_utf8(bytes).is_err(),
+        };
+        if let Some(previous) = self.files.get_mut(&name) {
+            if previous.checksum != read.checksum || previous.size != read.size {
+                self.failed = true;
+            } else {
+                previous.text |= text;
+            }
+        } else if self.files.len() < 16_384 {
+            self.files.insert(name, read);
+        } else {
+            self.failed = true;
+        }
+    }
+}
+
+struct ObservedLoader {
+    inner: Box<dyn FileLoader + Send + Sync>,
+    directory: Option<PathBuf>,
+}
+impl ObservedLoader {
+    fn observe(&self, path: &Path, bytes: &[u8], text: bool) {
+        let name = if path.is_absolute() {
+            Some(path.to_owned())
+        } else {
+            self.directory.as_ref().map(|root| root.join(path))
+        }
+        .and_then(|path| path.to_str().map(str::to_owned));
+        if let Ok(mut loaded) = LOADED.lock() {
+            loaded.insert(name, bytes, text);
+        }
+    }
+}
+impl FileLoader for ObservedLoader {
+    fn file_exists(&self, path: &Path) -> bool {
+        self.inner.file_exists(path)
+    }
+    fn read_file(&self, path: &Path) -> std::io::Result<String> {
+        let bytes = self.inner.read_file(path)?;
+        self.observe(path, bytes.as_bytes(), true);
+        Ok(bytes)
+    }
+    fn read_binary_file(&self, path: &Path) -> std::io::Result<Arc<[u8]>> {
+        let bytes = self.inner.read_binary_file(path)?;
+        self.observe(path, &bytes, false);
+        Ok(bytes)
+    }
+    fn current_directory(&self) -> std::io::Result<PathBuf> {
+        self.inner.current_directory()
+    }
+}
+
+/// Observe returned bytes without changing the actual loader or its failures.
+pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
+    if request().is_none() && !crate::sail_native_inputs::requested() {
+        return;
+    }
+    let inner = config.file_loader.take().unwrap_or_else(|| Box::new(RealFileLoader));
+    let directory = inner.current_directory().ok();
+    if let Ok(mut loaded) = LOADED.lock() {
+        loaded.active = true;
+        if directory.is_none() || (loaded.directory.is_some() && loaded.directory != directory) {
+            loaded.failed = true;
+        } else {
+            loaded.directory = directory.clone();
+        }
+    }
+    config.file_loader = Some(Box::new(ObservedLoader { inner, directory }));
+}
+
 pub(crate) fn begin_driver_environment(via_cargo: bool) {
+    if let Ok(mut loaded) = LOADED.lock() {
+        *loaded = LoadedInputs::default();
+    }
     if let Ok(mut environment) = DRIVER_ENVIRONMENT.lock() {
         *environment = if via_cargo { None } else { Some(BTreeMap::new()) };
     }
@@ -239,23 +351,49 @@ pub(crate) fn finish(success: bool) {
 fn source_records<'a>(
     files: impl Iterator<Item = &'a SourceFile>,
 ) -> Option<BTreeMap<String, Value>> {
+    let loaded = LOADED.lock().ok()?;
+    source_records_with(files, &loaded)
+}
+
+fn source_records_with<'a>(
+    files: impl Iterator<Item = &'a SourceFile>,
+    loaded: &LoadedInputs,
+) -> Option<BTreeMap<String, Value>> {
+    if loaded.failed {
+        return None;
+    }
     let mut sources = BTreeMap::new();
     for file in files.filter(|file| file.is_real_file() && !file.is_imported()) {
         if sources.len() >= 16_384 {
             return None;
         }
-        let checksum = file.checksum_hash?;
+        let checksum = file.checksum_hash?.to_string();
         let name = file.name.prefer_local_unconditionally().to_string();
-        if sources
-            .insert(
-                name,
-                json!({
-                    "checksum": checksum.to_string(),
-                    "size": file.unnormalized_source_len,
-                }),
-            )
-            .is_some()
-        {
+        let value = if loaded.active {
+            let path = Path::new(&name);
+            let lookup = if path.is_absolute() {
+                path.to_owned()
+            } else {
+                loaded.directory.as_ref()?.join(path)
+            };
+            let original = loaded.files.get(lookup.to_str()?)?;
+            // A non-UTF-8 binary gets dummy empty text in rustc's source map.
+            // A real text read must still agree with the actual source map.
+            let dummy_binary = original.non_utf8
+                && !original.text
+                && file.unnormalized_source_len == 0
+                && file.src.as_ref().is_some_and(|source| source.is_empty());
+            if !dummy_binary
+                && (original.checksum != checksum
+                    || original.size as u64 != u64::from(file.unnormalized_source_len))
+            {
+                return None;
+            }
+            json!({ "checksum": original.checksum, "size": original.size })
+        } else {
+            json!({ "checksum": checksum, "size": file.unnormalized_source_len })
+        };
+        if sources.insert(name, value).is_some() {
             return None;
         }
     }
@@ -484,5 +622,53 @@ mod tests {
         pending.insert("verification", Some(json!({})));
         pending.insert("compilation", Some(json!({})));
         assert!(!pending.complete());
+    }
+    #[test]
+    fn non_utf8_binary_records_returned_bytes_instead_of_dummy_empty_text() {
+        let file = source("");
+        let name = file.name.prefer_local_unconditionally().to_string();
+        let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+        loaded.insert(Some(name.clone()), &[0xff], false);
+        let records = super::source_records_with(std::iter::once(&file), &loaded).unwrap();
+        assert_eq!(records[&name]["size"], 1);
+        assert_eq!(
+            records[&name]["checksum"],
+            "sha256=a8100ae6aa1940d0b663bb31cd466142ebbdbd5187131b92d93818987832eb89"
+        );
+        loaded.insert(Some(name), &[], false);
+        assert!(super::source_records_with(std::iter::once(&file), &loaded).is_none());
+    }
+
+    #[test]
+    fn conflicting_text_and_binary_reads_and_missing_coverage_refuse() {
+        let file = source("original");
+        let name = file.name.prefer_local_unconditionally().to_string();
+        let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+        assert!(super::source_records_with(std::iter::once(&file), &loaded).is_none());
+        loaded.insert(Some(name.clone()), b"original", true);
+        loaded.insert(Some(name), b"different", false);
+        assert!(loaded.failed);
+        assert!(super::source_records_with(std::iter::once(&file), &loaded).is_none());
+    }
+
+    #[test]
+    fn empty_binary_and_crlf_text_keep_exact_raw_byte_observations() {
+        for bytes in ["", "original\r\n"] {
+            let file = SourceFile::new(
+                FileName::Real(RealFileName::from_virtual_path(std::path::Path::new(
+                    "/sail/compiler-input.rs",
+                ))),
+                bytes.to_owned(),
+                SourceFileHashAlgorithm::Md5,
+                Some(SourceFileHashAlgorithm::Sha256),
+            )
+            .unwrap();
+            let name = file.name.prefer_local_unconditionally().to_string();
+            let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+            loaded.insert(Some(name.clone()), bytes.as_bytes(), !bytes.is_empty());
+            let records = super::source_records_with(std::iter::once(&file), &loaded).unwrap();
+            assert_eq!(records[&name]["size"], bytes.len());
+            assert_eq!(records[&name]["checksum"], file.checksum_hash.unwrap().to_string());
+        }
     }
 }

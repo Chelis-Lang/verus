@@ -12,6 +12,7 @@ struct DefaultCallbacks;
 impl rustc_driver::Callbacks for DefaultCallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
         crate::sail_source_base::configure(config);
+        crate::sail_compiler_inputs::configure(config);
     }
 
     fn after_analysis<'tcx>(
@@ -150,6 +151,7 @@ impl rustc_driver::Callbacks for CompilerCallbacksEraseMacro {
     // to fix an issue with stability attributes.
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
         crate::sail_source_base::configure(config);
+        crate::sail_compiler_inputs::configure(config);
         if self.override_stability {
             config.override_queries = Some(|_session, providers| {
                 providers.queries.hir_attr_map = |tcx, owner_id| {
