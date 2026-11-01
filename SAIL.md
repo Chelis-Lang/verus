@@ -29,7 +29,9 @@ normalization, solver flag change or accepted verdict exception is introduced.
 ## Candidate correction: isolated specification termination checks
 
 The VI-0040 candidate uses the existing spinoff solver mechanism for
-specification termination checks. One lazy companion solver per bucket receives
+specification termination checks with the pinned Z3 and its default encoding.
+CVC5, including the explicit CVC5-encoding experiment on Z3, retains
+their existing route. One lazy companion solver per bucket receives
 the complete context before its first check and only newly admitted context
 batches thereafter. Every context batch is loaded at most twice overall; extra
 context parsing does not grow quadratically with the number of checks. The

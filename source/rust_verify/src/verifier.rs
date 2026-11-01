@@ -1602,7 +1602,9 @@ impl Verifier {
                                 || (cmds.prover_choice == vir::def::ProverChoice::BitVector)
                                 || *profile_rerun
                                 || self.args.spinoff_all;
-                            let shared_termination = matches!(query_op, QueryOp::SpecTermination)
+                            let shared_termination = matches!(self.args.solver, SmtSolver::Z3)
+                                && matches!(self.args.smt_encoding, air::context::SmtEncoding::Z3)
+                                && matches!(query_op, QueryOp::SpecTermination)
                                 && cmds.prover_choice == vir::def::ProverChoice::DefaultProver;
 
                             let profile_file_name = if *profile_rerun
