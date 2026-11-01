@@ -1686,7 +1686,7 @@ impl Verifier {
                                             ).as_str(),
                                         ));
                                     }
-                                    spec_termination_context = Some(self.new_air_context_with_bucket_context(
+                                    let mut context = self.new_air_context_with_bucket_context(
                                         message_interface.clone(),
                                         function_opgen.ctx(),
                                         reporter,
@@ -1698,7 +1698,13 @@ impl Verifier {
                                         spec_termination_profile.as_ref(),
                                         "spec_termination",
                                         vir::def::ProverChoice::DefaultProver,
-                                    )?);
+                                    )?;
+                                    if self.args.solver_version_check {
+                                        context.set_expected_solver_version(
+                                            cargo_verus_toolchains::external_deps::Z3_VERSION.to_string(),
+                                        );
+                                    }
+                                    spec_termination_context = Some(context);
                                     spec_termination_cursor = bucket_context.len();
                                 }
                                 let context = spec_termination_context.as_mut().ok_or_else(|| {

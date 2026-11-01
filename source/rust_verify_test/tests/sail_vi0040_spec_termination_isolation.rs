@@ -109,3 +109,86 @@ test_verify_one_file! {
         }
     } => Err(err) => assert_one_fails(err)
 }
+
+// Set the proxy only on this child, so parallel source-suite tests keep their
+// original solver. It runs the actual selected Z3 (or Sail shim) and changes
+// only its version response; no proof answer or input command is fabricated.
+#[cfg(unix)]
+#[test]
+fn sail_vi0040_spec_only_still_rejects_a_solver_version_mismatch() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    assert!(std::env::var_os("VERUS_IN_VARGO").is_some());
+    let executable = std::env::current_exe().expect("test executable");
+    let profile = executable.parent().expect("deps").parent().expect("profile");
+    let runtime = profile
+        .ancestors()
+        .nth(2)
+        .expect("source")
+        .join("target-verus")
+        .join(profile.file_name().expect("profile name"));
+    let solver = std::env::var_os("VERUS_Z3_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("../z3"));
+    let solver = std::path::absolute(solver).expect("absolute selected solver path");
+    let directory = tempfile::tempdir().expect("version fixture");
+    let source = directory.path().join("spec.rs");
+    std::fs::write(
+        &source,
+        "use vstd::prelude::*; verus! { pub open spec fn down(n:nat) -> nat decreases n { if n == 0 { 0 } else { down((n-1) as nat) } } }",
+    )
+    .expect("recursive-spec-only source");
+    let proxy = directory.path().join("version-proxy.py");
+    std::fs::write(
+        &proxy,
+        r#"#!/usr/bin/env python3
+import os, subprocess, sys, threading
+child = subprocess.Popen([os.environ['SAIL_SPEC_TEST_Z3'], *sys.argv[1:]],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+def feed():
+    try:
+        for line in sys.stdin.buffer:
+            child.stdin.write(line)
+            child.stdin.flush()
+        child.stdin.close()
+    except BrokenPipeError:
+        pass
+threading.Thread(target=feed, daemon=True).start()
+try:
+    for line in child.stdout:
+        if line.startswith(b'(:version '):
+            line = b'(:version "0.0.0")\n'
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+except BrokenPipeError:
+    child.terminate()
+sys.exit(child.wait())
+"#,
+    )
+    .expect("selected-solver proxy");
+    std::fs::set_permissions(&proxy, std::fs::Permissions::from_mode(0o755))
+        .expect("executable proxy");
+    for check_version in [true, false] {
+        let mut command = Command::new(runtime.join("verus"));
+        command
+            .arg(&source)
+            .args(["--crate-type=lib", "--no-report-long-running"])
+            .env("VERUS_Z3_PATH", &proxy)
+            .env("SAIL_SPEC_TEST_Z3", &solver)
+            .env("RUST_BACKTRACE", "0");
+        if !check_version {
+            command.args(["-V", "no-solver-version-check"]);
+        }
+        let output = command.output().expect("actual verifier invocation");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if check_version {
+            assert!(!output.status.success(), "{}\n{}", stdout, stderr);
+            assert!(stderr.contains("version") && stderr.contains("0.0.0"), "{}", stderr);
+        } else {
+            assert!(output.status.success(), "{}\n{}", stdout, stderr);
+            assert!(stdout.contains("1 verified, 0 errors"), "{}", stdout);
+        }
+    }
+}
