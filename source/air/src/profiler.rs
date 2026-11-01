@@ -5,7 +5,7 @@ use smt_scope::analysis::{InstGraph, RawNodeIndex};
 use smt_scope::items::QuantIdx;
 use smt_scope::parsers::LogParser;
 use smt_scope::parsers::z3::Z3Parser;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const PROVER_LOG_FILE: &str = "verus-prover-trace.log";
 
@@ -48,6 +48,95 @@ impl std::fmt::Display for ProfilerError {
 }
 
 impl Profiler {
+    /// Combine independent solver streams without identifying their graph nodes.
+    /// Quantifier names retain the existing summed-cost interpretation; graph
+    /// components receive disjoint instance namespaces, never cross-stream edges.
+    fn merge(&mut self, other: Self) -> Result<(), ProfilerError> {
+        let invalid = || ProfilerError::InvalidTrace("combined prover profile overflow".to_owned());
+        let mut costs: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        for cost in self.quantifier_stats.iter().chain(&other.quantifier_stats) {
+            let entry = costs.entry(cost.quant.clone()).or_default();
+            entry.0 = entry.0.checked_add(cost.instantiations).ok_or_else(invalid)?;
+            entry.1 = entry.1.checked_add(cost.cost).ok_or_else(invalid)?;
+            entry.0.checked_mul(entry.1).ok_or_else(invalid)?;
+        }
+        costs
+            .values()
+            .try_fold(0u64, |sum, (count, _)| sum.checked_add(*count))
+            .ok_or_else(invalid)?;
+        let mut stats: Vec<_> = costs
+            .into_iter()
+            .map(|(quant, (instantiations, cost))| QuantCost { quant, instantiations, cost })
+            .collect();
+        stats.sort_by(|a, b| {
+            (b.instantiations * b.cost)
+                .cmp(&(a.instantiations * a.cost))
+                .then_with(|| a.quant.cmp(&b.quant))
+        });
+        let offset = self
+            .instantiation_graph
+            .nodes
+            .iter()
+            .map(|(_, part)| *part)
+            .max()
+            .map_or(Some(0), |part| part.checked_add(1))
+            .ok_or_else(invalid)?;
+        let graph = other.instantiation_graph;
+        let mut ids = HashMap::new();
+        for &(id, part) in &graph.nodes {
+            ids.insert((id, part), (id, part.checked_add(offset).ok_or_else(invalid)?));
+        }
+        if !graph.names.keys().chain(graph.edges.keys()).all(|id| ids.contains_key(id))
+            || !graph.edges.values().flatten().all(|id| ids.contains_key(id))
+        {
+            return Err(ProfilerError::InvalidTrace("inconsistent prover graph".to_owned()));
+        }
+        self.quantifier_stats = stats;
+        self.instantiation_graph.nodes.extend(ids.values().copied());
+        self.instantiation_graph
+            .names
+            .extend(graph.names.into_iter().map(|(id, name)| (ids[&id], name)));
+        self.instantiation_graph.edges.extend(
+            graph
+                .edges
+                .into_iter()
+                .map(|(id, edges)| (ids[&id], edges.into_iter().map(|edge| ids[&edge]).collect())),
+        );
+        Ok(())
+    }
+
+    /// Analyze one bucket's independent logs with one pair of progress notes.
+    /// Every stream contributes its complete costs and a disjoint graph component.
+    pub fn parse_many(
+        message_interface: std::sync::Arc<dyn crate::messages::MessageInterface>,
+        filenames: &[&std::path::Path],
+        description: Option<&str>,
+        diagnostics: &impl Diagnostics,
+    ) -> Result<Self, ProfilerError> {
+        let Some((first, rest)) = filenames.split_first() else {
+            return Err(ProfilerError::InvalidTrace("no prover logs".to_owned()));
+        };
+        if let Some(description) = description {
+            diagnostics.report_now(&message_interface.bare(
+                MessageLevel::Note,
+                &format!("Analyzing prover log for {} ...", description),
+            ));
+        }
+        let mut combined = Self::parse(message_interface.clone(), first, None, diagnostics)?;
+        for filename in rest {
+            combined.merge(Self::parse(message_interface.clone(), filename, None, diagnostics)?)?;
+        }
+        if let Some(description) = description {
+            diagnostics.report_now(
+                &message_interface.bare(
+                    MessageLevel::Note,
+                    &format!("Log analysis complete for {}", description),
+                ),
+            );
+        }
+        Ok(combined)
+    }
+
     fn make_instantiation_graph(
         parser: &Z3Parser,
         inst_graph: &InstGraph,
@@ -259,5 +348,48 @@ impl Profiler {
 
     pub fn iter(&self) -> impl Iterator<Item = &QuantCost> + '_ {
         self.quantifier_stats.iter()
+    }
+}
+
+#[cfg(test)]
+mod sail_profile_tests {
+    use super::*;
+
+    fn profile(quant: &str, instantiations: u64, cost: u64) -> Profiler {
+        Profiler {
+            message_interface: std::sync::Arc::new(crate::messages::AirMessageInterface {}),
+            quantifier_stats: vec![QuantCost { quant: quant.to_owned(), instantiations, cost }],
+            instantiation_graph: InstantiationGraph {
+                nodes: HashSet::from([(0, 0), (1, 0)]),
+                names: HashMap::from([((0, 0), quant.to_owned()), ((1, 0), quant.to_owned())]),
+                edges: HashMap::from([((0, 0), HashSet::from([(1, 0)]))]),
+            },
+        }
+    }
+
+    #[test]
+    fn independent_profiles_keep_all_counts_and_disjoint_edges() {
+        let mut combined = profile("user_q", 2, 3);
+        combined.merge(profile("user_q", 5, 7)).unwrap();
+        assert_eq!(combined.quant_count(), 1);
+        assert_eq!(combined.total_instantiations(), 7);
+        assert_eq!(combined.quantifier_stats[0].cost, 10);
+        assert_eq!(combined.instantiation_graph.nodes.len(), 4);
+        assert_eq!(combined.instantiation_graph.names.len(), 4);
+        assert_eq!(combined.instantiation_graph.edges.len(), 2);
+        assert_eq!(combined.instantiation_graph.edges[&(0, 0)], HashSet::from([(1, 0)]));
+        assert_eq!(combined.instantiation_graph.edges[&(0, 1)], HashSet::from([(1, 1)]));
+        combined.merge(profile("user_other", 11, 13)).unwrap();
+        assert_eq!(combined.total_instantiations(), 18);
+        assert_eq!(combined.instantiation_graph.nodes.len(), 6);
+        assert_eq!(combined.instantiation_graph.edges[&(0, 2)], HashSet::from([(1, 2)]));
+    }
+
+    #[test]
+    fn an_overflowing_profile_does_not_partially_replace_the_original() {
+        let mut combined = profile("user_q", u64::MAX, 0);
+        assert!(combined.merge(profile("user_q", 1, 0)).is_err());
+        assert_eq!(combined.total_instantiations(), u64::MAX);
+        assert_eq!(combined.instantiation_graph.nodes.len(), 2);
     }
 }
