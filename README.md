@@ -1,4 +1,4 @@
-> **This is Sail's fork of Verus**, used only to build the runtime of [Sail](https://github.com/Chelis-Lang/sail)'s opt-in repair engine (Sail's repository is private until its open-source release).
+> **This is Sail's fork of Verus.** [Sail](https://github.com/Chelis-Lang/sail) builds every verification it runs from this fork, which removes run-to-run variation in Verus's solver queries and adds Sail's proof-repair engine.
 > See [SAIL.md](SAIL.md) for what differs from upstream. For Verus itself, use [verus-lang/verus](https://github.com/verus-lang/verus).
 
 [![Quick Start](https://img.shields.io/badge/tutorial-quick%20start-informational)](https://verus-lang.github.io/verus/guide/getting_started.html) [![Verus docs](https://img.shields.io/badge/docs-verus-informational)](https://verus-lang.github.io/verus/guide/) [![Library Documentation](https://img.shields.io/badge/docs-vstd-informational)](https://verus-lang.github.io/verus/verusdoc/vstd/) [![project chat](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://verus-lang.zulipchat.com)
