@@ -25,6 +25,10 @@ struct Pending {
 
 static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 
+pub(crate) fn requested() -> bool {
+    request().is_some()
+}
+
 fn request() -> Option<Request> {
     let directory = PathBuf::from(std::env::var_os("SAIL_NATIVE_COMPILER_INPUTS")?);
     let binding = std::env::var("SAIL_NATIVE_COMPILER_INPUTS_BINDING").ok()?;
