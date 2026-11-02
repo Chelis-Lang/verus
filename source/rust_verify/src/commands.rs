@@ -103,7 +103,7 @@ impl<'a> OpGenerator<'a> {
         // Iterate through each SCC
         if self.scc_idx < self.ctx.global.func_call_sccs.len() {
             let current_queue = VecDeque::from(
-                self.handle_scc_component(self.ctx.global.func_call_sccs[self.scc_idx].clone())?,
+                self.handle_scc_component(self.ctx.global.func_call_sccs[self.scc_idx])?,
             );
             self.scc_idx += 1;
             Ok(Some(FunctionOpGenerator {
@@ -134,34 +134,33 @@ impl<'a> OpGenerator<'a> {
         self.handle_proof_body(function, Style::CheckApiSafety)
     }
 
-    fn handle_scc_component(&mut self, scc_rep: Node) -> Result<Vec<Op>, VirErr> {
-        let (mut ops, post_ops) = self.handle_specs_scc_component(&scc_rep)?;
+    fn handle_scc_component(&mut self, scc: usize) -> Result<Vec<Op>, VirErr> {
+        let scc_functions: Vec<FunctionSst> = self
+            .ctx
+            .global
+            .func_call_graph
+            .get_scc_nodes(scc)
+            .filter_map(|node| match node {
+                Node::Fun(f) => self.func_map.get(f).cloned(),
+                _ => None,
+            })
+            .collect();
+        let (mut ops, post_ops) = self.handle_specs_scc_component(&scc_functions)?;
 
-        for node in self.ctx.global.func_call_graph.get_scc_nodes(&scc_rep) {
-            match &node {
-                Node::Fun(f) => {
-                    if let Some(func) = self.func_map.get(f) {
-                        let func = func.clone();
-                        let f_ops =
-                            self.handle_proof_body_normal_for_proof_and_exec(func.clone())?;
-                        let f_ops2 = self.handle_proof_body_safe_api_check(func.clone())?;
-
-                        ops.extend(f_ops);
-                        ops.extend(f_ops2);
-                    }
-                }
-                _ => {}
-            }
+        for func in &scc_functions {
+            let f_ops = self.handle_proof_body_normal_for_proof_and_exec(func.clone())?;
+            let f_ops2 = self.handle_proof_body_safe_api_check(func.clone())?;
+            ops.extend(f_ops);
+            ops.extend(f_ops2);
         }
 
         // Some axioms (broadcast_forall, spec definitions, trait implementations)
         // are only sound at the end of the SCC, after obligations have been satisfied:
         ops.extend(post_ops);
-        for node in self.ctx.global.func_call_graph.get_scc_nodes(&scc_rep) {
+        for node in self.ctx.global.func_call_graph.get_scc_nodes(scc) {
             if let Node::TraitImpl(ImplPath::TraitImplPath(impl_path)) = node {
                 let mut impl_paths = vec![impl_path.clone()];
-                if let Some(extensions) = &self.ctx.global.trait_impl_to_extensions.get(&impl_path)
-                {
+                if let Some(extensions) = &self.ctx.global.trait_impl_to_extensions.get(impl_path) {
                     impl_paths.extend(extensions.iter().cloned());
                 }
                 for i in &impl_paths {
@@ -176,10 +175,10 @@ impl<'a> OpGenerator<'a> {
         Ok(ops)
     }
 
-    fn handle_specs_scc_component(&mut self, scc_rep: &Node) -> Result<(Vec<Op>, Vec<Op>), VirErr> {
-        let scc_nodes = self.ctx.global.func_call_graph.get_scc_nodes(scc_rep);
-        let mut scc_functions: Vec<FunctionSst> = Vec::new();
-
+    fn handle_specs_scc_component(
+        &mut self,
+        scc_functions: &[FunctionSst],
+    ) -> Result<(Vec<Op>, Vec<Op>), VirErr> {
         // In an 'exec' function, the req% and ens% definitions conceptually go with
         // the FnDefImplPath node, which represents the trait bound
         // FnDef(f) : FnOnce(_) -> _
@@ -187,16 +186,6 @@ impl<'a> OpGenerator<'a> {
         // used anywhere (which is most of the time).
         // So: req% and ens% definitions go with the Fun(f) node for non-exec functions
         // and with the FnDefImplPath(f) node for exec functions.
-        for node in scc_nodes.into_iter() {
-            match node {
-                Node::Fun(f) => {
-                    if let Some(function) = self.func_map.get(&f) {
-                        scc_functions.push(function.clone());
-                    }
-                }
-                _ => {}
-            }
-        }
         let module = self.ctx.module_path();
 
         let mut pre_ops = vec![];
