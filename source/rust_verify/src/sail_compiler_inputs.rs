@@ -7,7 +7,6 @@
 //! duplicate or failed phases cannot produce a complete final observation.
 
 use rustc_span::source_map::{FileLoader, RealFileLoader};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use rustc_middle::ty::TyCtxt;
 use rustc_session::Session;
-use rustc_span::{SourceFile, symbol::Symbol};
+use rustc_span::{SourceFile, SourceFileHash, SourceFileHashAlgorithm, symbol::Symbol};
 use serde_json::{Value, json};
 
 const DIRECTORY: &str = "SAIL_COMPILER_INPUTS";
@@ -51,6 +50,7 @@ struct LoadedFile {
 
 #[derive(Default)]
 struct LoadedInputs {
+    algorithm: Option<SourceFileHashAlgorithm>,
     directory: Option<PathBuf>,
     active: bool,
     failed: bool,
@@ -58,6 +58,7 @@ struct LoadedInputs {
 }
 
 static LOADED: Mutex<LoadedInputs> = Mutex::new(LoadedInputs {
+    algorithm: None,
     directory: None,
     active: false,
     failed: false,
@@ -73,8 +74,12 @@ impl LoadedInputs {
             self.failed = true;
             return;
         };
+        let Some(algorithm) = self.algorithm else {
+            self.failed = true;
+            return;
+        };
         let read = LoadedFile {
-            checksum: format!("sha256={}", hex::encode(Sha256::digest(bytes))),
+            checksum: SourceFileHash::new_in_memory(algorithm, bytes).to_string(),
             size: bytes.len(),
             text,
             non_utf8: std::str::from_utf8(bytes).is_err(),
@@ -136,13 +141,19 @@ pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
     }
     let inner = config.file_loader.take().unwrap_or_else(|| Box::new(RealFileLoader));
     let directory = inner.current_directory().ok();
+    let algorithm = config.opts.unstable_opts.checksum_hash_algorithm;
     if let Ok(mut loaded) = LOADED.lock() {
-        loaded.active = true;
-        if directory.is_none() || (loaded.directory.is_some() && loaded.directory != directory) {
+        if directory.is_none()
+            || algorithm.is_none()
+            || (loaded.active && loaded.algorithm != algorithm)
+            || (loaded.directory.is_some() && loaded.directory != directory)
+        {
             loaded.failed = true;
         } else {
             loaded.directory = directory.clone();
+            loaded.algorithm = algorithm;
         }
+        loaded.active = true;
     }
     config.file_loader = Some(Box::new(ObservedLoader { inner, directory }));
 }
@@ -627,23 +638,40 @@ mod tests {
     fn non_utf8_binary_records_returned_bytes_instead_of_dummy_empty_text() {
         let file = source("");
         let name = file.name.prefer_local_unconditionally().to_string();
-        let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+        let mut loaded = super::LoadedInputs {
+            active: true,
+            algorithm: file.checksum_hash.map(|hash| hash.kind),
+            ..Default::default()
+        };
         loaded.insert(Some(name.clone()), &[0xff], false);
         let records = super::source_records_with(std::iter::once(&file), &loaded).unwrap();
         assert_eq!(records[&name]["size"], 1);
         assert_eq!(
             records[&name]["checksum"],
-            "sha256=a8100ae6aa1940d0b663bb31cd466142ebbdbd5187131b92d93818987832eb89"
+            rustc_span::SourceFileHash::new_in_memory(SourceFileHashAlgorithm::Blake3, [0xff])
+                .to_string()
         );
         loaded.insert(Some(name), &[], false);
         assert!(super::source_records_with(std::iter::once(&file), &loaded).is_none());
     }
 
     #[test]
+    fn missing_checksum_algorithm_never_supplies_observations() {
+        let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+        loaded.insert(Some("/sail/source.rs".to_owned()), b"source", true);
+        assert!(loaded.failed);
+        assert!(loaded.files.is_empty());
+    }
+
+    #[test]
     fn conflicting_text_and_binary_reads_and_missing_coverage_refuse() {
         let file = source("original");
         let name = file.name.prefer_local_unconditionally().to_string();
-        let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+        let mut loaded = super::LoadedInputs {
+            active: true,
+            algorithm: file.checksum_hash.map(|hash| hash.kind),
+            ..Default::default()
+        };
         assert!(super::source_records_with(std::iter::once(&file), &loaded).is_none());
         loaded.insert(Some(name.clone()), b"original", true);
         loaded.insert(Some(name), b"different", false);
@@ -653,18 +681,25 @@ mod tests {
 
     #[test]
     fn empty_binary_and_crlf_text_keep_exact_raw_byte_observations() {
-        for bytes in ["", "original\r\n"] {
+        for (algorithm, bytes) in [SourceFileHashAlgorithm::Sha256, SourceFileHashAlgorithm::Blake3]
+            .into_iter()
+            .flat_map(|algorithm| ["", "original\r\n"].map(|bytes| (algorithm, bytes)))
+        {
             let file = SourceFile::new(
                 FileName::Real(RealFileName::from_virtual_path(std::path::Path::new(
                     "/sail/compiler-input.rs",
                 ))),
                 bytes.to_owned(),
                 SourceFileHashAlgorithm::Md5,
-                Some(SourceFileHashAlgorithm::Sha256),
+                Some(algorithm),
             )
             .unwrap();
             let name = file.name.prefer_local_unconditionally().to_string();
-            let mut loaded = super::LoadedInputs { active: true, ..Default::default() };
+            let mut loaded = super::LoadedInputs {
+                active: true,
+                algorithm: file.checksum_hash.map(|hash| hash.kind),
+                ..Default::default()
+            };
             loaded.insert(Some(name.clone()), bytes.as_bytes(), !bytes.is_empty());
             let records = super::source_records_with(std::iter::once(&file), &loaded).unwrap();
             assert_eq!(records[&name]["size"], bytes.len());
