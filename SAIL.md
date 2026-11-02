@@ -131,6 +131,9 @@ The VI-0041 correction (Sail #599) binds source observations to bytes returned
 by the actual file loader. Rustc represents non-UTF-8 binary includes with dummy
 empty source-map text; those records now retain the real binary digest and raw
 length. Text source-map checksums must agree with the loader's original read.
+The observer uses the compiler's configured source checksum algorithm, including
+Cargo's BLAKE3 and the verifier's SHA-256, through rustc's existing byte-hash API.
+No configured checksum or an algorithm change with prior reads withholds coverage.
 Missing coverage, conflicting reads and unknown paths withhold observation;
 paths are never reopened to stand in for earlier compiler bytes. Relative source
 spellings and both verification/compilation callbacks are covered. Native runtime
