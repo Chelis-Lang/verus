@@ -17,7 +17,9 @@ impl Write for Bounded {
     }
     fn flush(&mut self)->std::io::Result<()>{Ok(())}
 }
-fn active()->bool{std::env::var("SAIL_ENGINE").as_deref()==Ok("interactive")}
+fn active()->bool{matches!(std::env::var("SAIL_ENGINE").as_deref(),Ok("interactive" | "campaign"))}
+pub(super) fn campaign_requested()->bool{std::env::var("SAIL_ENGINE").as_deref()==Ok("campaign")}
+pub(super) fn campaign_facts_active()->bool{campaign_requested() && !FOCUS.load(Ordering::Relaxed)}
 // Observation is independently bounded, never part of proof acceptance.
 const OBSERVER_BYTES:usize=1024*1024;
 const OBSERVER_NAMES:usize=4096;
@@ -114,7 +116,7 @@ fn unique_names(krate:&Krate)->Option<HashMap<String,u32>>{
     }
     Some(names)
 }
-fn unique(v:&Verifier,fun:&Fun)->bool {
+pub(super) fn unique(v:&Verifier,fun:&Fun)->bool {
     let Some(name)=vir::ast_util::sail_bounded_friendly_name(&fun.path,OBSERVER_NAMES)else{return false;};
     let Some(krate)=v.vir_crate.as_ref()else{return false;};
     let key=Arc::as_ptr(krate) as usize;

@@ -10,6 +10,40 @@ into the [Sail repository](https://github.com/Chelis-Lang/sail).
 releases and contributions) use upstream
 [verus-lang/verus](https://github.com/verus-lang/verus).
 
+## Candidate: compiler-owned mutation admission facts
+
+The unselected campaign candidate extends the existing private `SAIL_ENGINE`
+channel with the explicit value `campaign`. Ordinary and interactive modes
+retain their existing observations. Campaign mode additionally emits version-one
+function inventories before bucket pruning: exact producer names with an
+ambiguity flag, compiler source/body ranges and original-source checksums,
+mode/item kind, `when_used_as_spec` and authoritative call-graph cycle status.
+Original byte offsets account for rustc's BOM and CRLF normalization. No path
+is reopened as a substitute for an earlier compiler read. Missing source/body
+or graph membership remains missing evidence, never an admission default.
+
+A bounded inventory completion marker requires every ordinal and original
+record to be present. It does not attest proof success, a complete external Cargo
+input closure or the overall compiler's successful completion. Consumers must
+establish those independently and refuse unsupported or missing evidence.
+
+Query-result branches also emit function-owned original diagnostic messages
+with a verifier/resource-limit category, before buffering or rendering. This
+supplies producer attribution without source-line heuristics; the consumer
+must join the exact original message to its actual focused/full producer mode.
+It must retain unknown answers and refuse ambiguous or incomplete joins.
+
+Status: built as an unselected native Mac component at `27aa7b0d`, with
+2,059 vstd functions verified in both builds and 27 independently executed
+compiler controls. Exact passing/failing SMT files and diagnostics match the
+parent in those controls. Raw independent evidence archive SHA-256:
+`b0796d89863432ffdc9ffa246b58cd4e3b83e10b7e03bc621b99906f047cce10`.
+The compiler `source` span may cover only part of a declaration; it is not an
+item/contract boundary. The separate body span supplies body coordinates.
+Real-project mutation admission, Linux/Mac conformance,
+source-suite/determinism and measured observation costs remain required.
+No solver answer, verification policy or default diagnostic change is proposed.
+
 ## Candidate correction: signature-scoped spec formals
 
 The candidate names spec formals by complete signature size and position,

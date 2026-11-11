@@ -187,6 +187,8 @@ impl Diagnostics for Reporter<'_> {
 // `dbg!` fallback prints stay the same.
 #[path = "sail_engine.rs"]
 mod sail_engine;
+#[path = "sail_campaign_facts.rs"]
+mod sail_campaign_facts;
 
 thread_local! {
     /// Sail fork (VI-0012): set by a parallel worker that has already reported
@@ -911,7 +913,9 @@ impl Verifier {
                         msg.push_str("; consider rerunning with --profile for more details");
                     }
                     if let Some(level) = level {
-                        reporter.report(&message(level, msg, &context.span).to_any());
+                        let diagnostic = message(level, msg, &context.span).to_any();
+                        sail_campaign_facts::diagnostic(self, &context.fun, &diagnostic, level, "resource-limit");
+                        reporter.report(&diagnostic);
                     }
                     // need to report that we need to rerun from this function (into spinoff)
                     // so that we can run the profiler on an isolated file on the second pass
@@ -936,10 +940,13 @@ impl Verifier {
                     if let Some(level) = level {
                         if let Some(error) = error {
                             // singular_invalid case
+                            sail_campaign_facts::diagnostic(self, &context.fun, &error, level, "verifier");
                             reporter.report_as(&error, level);
                         } else {
                             // bitvector case
-                            reporter.report(&message(level, &context.desc, &context.span).to_any());
+                            let diagnostic = message(level, &context.desc, &context.span).to_any();
+                            sail_campaign_facts::diagnostic(self, &context.fun, &diagnostic, level, "verifier");
+                            reporter.report(&diagnostic);
                         }
                     }
                     break;
@@ -962,6 +969,7 @@ impl Verifier {
                     let error: Message = error.downcast().unwrap();
                     if let Some(level) = level {
                         if !self.expand_flag {
+                            sail_campaign_facts::diagnostic(self, &context.fun, &error.clone().to_any(), level, "verifier");
                             match &mut *diagnostics_to_report.borrow_mut() {
                                 Some(collected) => {
                                     collected.as_mut().push((error.clone(), level));
@@ -2250,6 +2258,7 @@ impl Verifier {
             self.args.report_long_running,
             smt_aliases,
         )?;
+        sail_campaign_facts::emit(self, compiler, &krate, &global_ctx);
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
 
