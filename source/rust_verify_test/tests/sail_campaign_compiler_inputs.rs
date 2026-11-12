@@ -67,6 +67,7 @@ fn rejected_proofs_keep_diagnostic_reads_without_successful_reuse_authority() {
     let root = tempfile::tempdir().expect("fixture directory");
     let project = root.path().join("project");
     std::fs::create_dir_all(project.join("src")).expect("source directory");
+    let project = project.canonicalize().expect("actual project directory");
     let vstd = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("source").join("vstd");
     std::fs::write(
         project.join("Cargo.toml"),
@@ -96,6 +97,9 @@ vstd = {{ path = {} }}
     let good = "use vstd::prelude::*; verus! { pub proof fn tracked() { assert(env!(\"SAIL_TEST_CAMPAIGN_VALUE\")@ == \"ok\"@); } }";
     std::fs::write(&source, good).expect("passing source");
     let binding = "a".repeat(64);
+    let (control_normal, _) = directories(root.path(), "normal-control");
+    let control = verify(&project, Some(&control_normal), None);
+    assert!(control.status.success());
     let (normal, campaign) = directories(root.path(), "passing");
     let passing = verify(&project, Some(&normal), Some((&campaign, &binding)));
     assert!(passing.status.success(), "{}", String::from_utf8_lossy(&passing.stderr));
@@ -103,11 +107,20 @@ vstd = {{ path = {} }}
     assert_eq!(document(&normal)["schema"], 2);
     let reads = document(&campaign);
     assert_eq!(reads["kind"], "sail-campaign-compiler-inputs");
-    assert_eq!(reads["schema"], 1);
+    assert_eq!(reads["schema"], 2);
     assert_eq!(reads["binding"], binding);
     assert_eq!(reads["complete"], true);
     assert_eq!(reads["verifier_success"], true);
     assert_eq!(reads["coverage"], "verification-and-compilation");
+    assert_eq!(document(&normal)["phases"], document(&control_normal)["phases"]);
+    assert_eq!(passing.stdout, control.stdout);
+    assert_eq!(passing.stderr, control.stderr);
+    assert_eq!(reads["source_environment"]["verification"]["SAIL_TEST_CAMPAIGN_VALUE"], "ok");
+    assert!(reads["source_environment"]["verification"].get("CARGO_MANIFEST_DIR").is_none());
+    assert_eq!(
+        reads["driver_tracked_environment"]["CARGO_MANIFEST_DIR"],
+        project.to_str().unwrap()
+    );
     assert_eq!(
         reads["phases"]["verification"]["tracked_environment"]["SAIL_TEST_CAMPAIGN_VALUE"],
         "ok"
@@ -132,6 +145,27 @@ vstd = {{ path = {} }}
         "ok"
     );
     assert!(reads["pid"].as_u64().expect("actual compiler pid") > 0);
+
+    // Source reads remain source reads even when their value and name exactly
+    // match an earlier Cargo driver declaration. Never infer origin by value.
+    std::fs::write(&source, format!(
+        "use vstd::prelude::*; verus! {{ pub proof fn tracked() {{ assert(env!(\"CARGO_MANIFEST_DIR\")@ == {:?}@); }} }}",
+        project.to_str().unwrap()
+    )).expect("source reads a driver-declared name");
+    let (normal, campaign) = directories(root.path(), "source-and-driver");
+    let both = verify(&project, Some(&normal), Some((&campaign, &binding)));
+    assert!(both.status.success(), "{}", String::from_utf8_lossy(&both.stderr));
+    let reads = document(&campaign);
+    assert_eq!(
+        reads["source_environment"]["verification"]["CARGO_MANIFEST_DIR"],
+        project.to_str().unwrap()
+    );
+    assert_eq!(
+        reads["driver_tracked_environment"]["CARGO_MANIFEST_DIR"],
+        project.to_str().unwrap()
+    );
+
+    std::fs::write(&source, good.replace("== \"ok\"@", "== \"wrong\"@")).expect("rejected source");
 
     let (normal, campaign) = directories(root.path(), "foreign-binding");
     let foreign = "b".repeat(64);

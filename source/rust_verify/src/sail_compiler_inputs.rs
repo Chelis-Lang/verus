@@ -41,6 +41,9 @@ static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 // invocation has no Cargo driver bookkeeping; an owned absent value is a
 // distinct, explicitly declared protocol read.
 static DRIVER_ENVIRONMENT: Mutex<Option<BTreeMap<String, Option<String>>>> = Mutex::new(None);
+type Environment = BTreeMap<String, Option<String>>;
+static CAMPAIGN_DRIVER: Mutex<Option<Environment>> = Mutex::new(None);
+static CAMPAIGN_SOURCE: Mutex<BTreeMap<String, Environment>> = Mutex::new(BTreeMap::new());
 
 #[derive(Clone, PartialEq, Eq)]
 struct LoadedFile {
@@ -161,12 +164,34 @@ pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
 }
 
 pub(crate) fn begin_driver_environment(via_cargo: bool) {
+    if let Ok(mut driver) = CAMPAIGN_DRIVER.lock() {
+        *driver = if via_cargo { None } else { Some(BTreeMap::new()) };
+    }
+    if let Ok(mut source) = CAMPAIGN_SOURCE.lock() {
+        source.clear();
+    }
     if let Ok(mut loaded) = LOADED.lock() {
         *loaded = LoadedInputs::default();
     }
     if let Ok(mut environment) = DRIVER_ENVIRONMENT.lock() {
         *environment = if via_cargo { None } else { Some(BTreeMap::new()) };
     }
+}
+
+/// Keep campaign source reads distinct before the driver could deduplicate
+/// them. Default-mode installation remains byte-for-byte the existing path.
+pub(crate) fn campaign_driver(environment: &Environment) -> bool {
+    if campaign_request().is_none() {
+        return false;
+    }
+    if let Ok(mut driver) = CAMPAIGN_DRIVER.lock() {
+        *driver = Some(environment.clone());
+    }
+    true
+}
+
+fn campaign_driver_reads() -> Option<Environment> {
+    CAMPAIGN_DRIVER.lock().ok()?.clone()
 }
 
 pub(crate) fn driver_common(value: Option<Option<String>>) {
@@ -210,8 +235,29 @@ impl Drop for TemporaryCommon<'_> {
 /// source-read set remains unpolluted before and after the synchronous writer,
 /// including unwinding. Existing source entries are never replaced or removed.
 pub(crate) fn write_dep_info(tcx: TyCtxt<'_>) {
-    let driver = driver_environment().unwrap_or_default();
-    with_driver_common(tcx.sess, &driver, || rustc_interface::passes::write_dep_info(tcx));
+    let mut driver = driver_environment().unwrap_or_default();
+    if campaign_request().is_some() {
+        if let Some(tracked) = campaign_driver_reads() {
+            driver.extend(tracked);
+        }
+        with_driver_entries(tcx.sess, &driver, || rustc_interface::passes::write_dep_info(tcx));
+    } else {
+        with_driver_common(tcx.sess, &driver, || rustc_interface::passes::write_dep_info(tcx));
+    }
+}
+
+fn with_driver_entries<T>(session: &Session, driver: &Environment, write: impl FnOnce() -> T) -> T {
+    let source: std::collections::BTreeSet<_> =
+        session.env_depinfo.borrow().iter().map(|(name, _)| name.as_str().to_owned()).collect();
+    let mut guards = Vec::new();
+    for (name, value) in driver {
+        if !source.contains(name) {
+            let entry = (Symbol::intern(name), value.as_deref().map(Symbol::intern));
+            let inserted = session.env_depinfo.borrow_mut().insert(entry).then_some(entry);
+            guards.push(TemporaryCommon { session, inserted });
+        }
+    }
+    write()
 }
 
 fn with_driver_common<T>(
@@ -289,7 +335,23 @@ pub(crate) fn record(tcx: TyCtxt<'_>, phase: &str) {
     let Some(request) = collection_request() else {
         return;
     };
-    let document = phase_record(tcx);
+    let mut document = phase_record(tcx);
+    if campaign_request().is_some() {
+        document = document.and_then(|mut document| {
+            let source: Environment =
+                serde_json::from_value(document["tracked_environment"].clone()).ok()?;
+            let mut sources = CAMPAIGN_SOURCE.lock().ok()?;
+            if sources.insert(phase.to_owned(), source.clone()).is_some() {
+                return None;
+            }
+            if phase == "verification" {
+                let environment =
+                    environment_records(source.into_iter().chain(campaign_driver_reads()?))?;
+                document["tracked_environment"] = serde_json::to_value(environment).ok()?;
+            }
+            Some(document)
+        });
+    }
     let Ok(mut pending) = PENDING.lock() else {
         return;
     };
@@ -397,13 +459,24 @@ pub(crate) fn finish_campaign(success: bool) {
     let Some(driver_environment) = driver_environment() else {
         return;
     };
+    let Some(driver_tracked_environment) = campaign_driver_reads() else {
+        return;
+    };
+    let Ok(source_environment) = CAMPAIGN_SOURCE.lock() else {
+        return;
+    };
+    if source_environment.keys().ne(pending.phases.keys()) {
+        return;
+    }
     let document = json!({
         "kind": "sail-campaign-compiler-inputs",
-        "schema": 1,
+        "schema": 2,
         "binding": request.binding,
         "pid": std::process::id(),
         "phases": pending.phases,
         "driver_environment": driver_environment,
+        "driver_tracked_environment": driver_tracked_environment,
+        "source_environment": *source_environment,
         "complete": true,
         "verifier_success": success,
         "coverage": if pending.complete() {
