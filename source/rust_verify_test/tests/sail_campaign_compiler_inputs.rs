@@ -20,6 +20,12 @@ fn cargo_verus() -> PathBuf {
 }
 
 fn verify(project: &Path, normal: Option<&Path>, campaign: Option<(&Path, &str)>) -> Output {
+    let clean = Command::new("cargo")
+        .current_dir(project)
+        .args(["clean", "-p", "campaign-input-fixture"])
+        .output()
+        .expect("clean owned fixture target");
+    assert!(clean.status.success(), "{}", String::from_utf8_lossy(&clean.stderr));
     let mut command = Command::new(cargo_verus());
     command.current_dir(project).args([
         "verify",
@@ -46,7 +52,12 @@ fn verify(project: &Path, normal: Option<&Path>, campaign: Option<(&Path, &str)>
             .env("SAIL_CAMPAIGN_COMPILER_INPUTS", directory)
             .env("SAIL_CAMPAIGN_COMPILER_BINDING", binding);
     }
-    command.output().expect("actual Cargo-Verus child")
+    let output = command.output().expect("actual Cargo-Verus child");
+    if let Some(case) = normal.or_else(|| campaign.map(|(path, _)| path)) {
+        std::fs::write(case.with_extension("stdout"), &output.stdout).expect("retain stdout");
+        std::fs::write(case.with_extension("stderr"), &output.stderr).expect("retain stderr");
+    }
+    output
 }
 
 fn document(directory: &Path) -> Value {
@@ -65,7 +76,11 @@ fn directories(root: &Path, name: &str) -> (PathBuf, PathBuf) {
 #[test]
 fn rejected_proofs_keep_diagnostic_reads_without_successful_reuse_authority() {
     let root = tempfile::tempdir().expect("fixture directory");
-    let project = root.path().join("project");
+    let retained = root.path().to_owned();
+    std::mem::forget(root);
+    let root = retained;
+    eprintln!("retained native compiler-read origin fixture: {}", root.display());
+    let project = root.join("project");
     std::fs::create_dir_all(project.join("src")).expect("source directory");
     let project = project.canonicalize().expect("actual project directory");
     let vstd = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("source").join("vstd");
@@ -97,10 +112,10 @@ vstd = {{ path = {} }}
     let good = "use vstd::prelude::*; verus! { pub proof fn tracked() { assert(env!(\"SAIL_TEST_CAMPAIGN_VALUE\")@ == \"ok\"@); } }";
     std::fs::write(&source, good).expect("passing source");
     let binding = "a".repeat(64);
-    let (control_normal, _) = directories(root.path(), "normal-control");
+    let (control_normal, _) = directories(&root, "normal-control");
     let control = verify(&project, Some(&control_normal), None);
     assert!(control.status.success());
-    let (normal, campaign) = directories(root.path(), "passing");
+    let (normal, campaign) = directories(&root, "passing");
     let passing = verify(&project, Some(&normal), Some((&campaign, &binding)));
     assert!(passing.status.success(), "{}", String::from_utf8_lossy(&passing.stderr));
     assert_eq!(document(&normal)["kind"], "sail-compiler-read-inputs");
@@ -129,7 +144,7 @@ vstd = {{ path = {} }}
     std::fs::write(&source, good.replace("== \"ok\"@", "== \"wrong\"@")).expect("rejected source");
     let reference = verify(&project, None, None);
     assert!(!reference.status.success());
-    let (normal, campaign) = directories(root.path(), "rejected");
+    let (normal, campaign) = directories(&root, "rejected");
     let rejected = verify(&project, Some(&normal), Some((&campaign, &binding)));
     assert_eq!(rejected.status.code(), reference.status.code());
     assert_eq!(rejected.stdout, reference.stdout);
@@ -152,7 +167,7 @@ vstd = {{ path = {} }}
         "use vstd::prelude::*; verus! {{ pub proof fn tracked() {{ assert(env!(\"CARGO_MANIFEST_DIR\")@ == {:?}@); }} }}",
         project.to_str().unwrap()
     )).expect("source reads a driver-declared name");
-    let (normal, campaign) = directories(root.path(), "source-and-driver");
+    let (normal, campaign) = directories(&root, "source-and-driver");
     let both = verify(&project, Some(&normal), Some((&campaign, &binding)));
     assert!(both.status.success(), "{}", String::from_utf8_lossy(&both.stderr));
     let reads = document(&campaign);
@@ -167,7 +182,7 @@ vstd = {{ path = {} }}
 
     std::fs::write(&source, good.replace("== \"ok\"@", "== \"wrong\"@")).expect("rejected source");
 
-    let (normal, campaign) = directories(root.path(), "foreign-binding");
+    let (normal, campaign) = directories(&root, "foreign-binding");
     let foreign = "b".repeat(64);
     assert!(!verify(&project, Some(&normal), Some((&campaign, &foreign))).status.success());
     assert!(
@@ -177,7 +192,7 @@ vstd = {{ path = {} }}
 
     std::fs::write(&source, "use vstd::prelude::*; verus! { pub fn bad() { let x: u8 = true; } }")
         .expect("early compiler error source");
-    let (normal, campaign) = directories(root.path(), "early-error");
+    let (normal, campaign) = directories(&root, "early-error");
     assert!(!verify(&project, Some(&normal), Some((&campaign, &binding))).status.success());
     assert!(!normal.join("inputs.json").exists());
     assert!(!campaign.join("inputs.json").exists(), "no completed verification read set");
