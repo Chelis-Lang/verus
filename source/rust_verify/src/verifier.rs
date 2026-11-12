@@ -2793,7 +2793,7 @@ impl Verifier {
             }
         }
         let chosen_triggers = global_ctx.get_chosen_triggers();
-        let mut low_confidence_triggers = None;
+        let mut low_confidence_triggers: Option<vir::messages::Span> = None;
         for chosen in chosen_triggers {
             match (
                 self.args.show_triggers,
@@ -2802,7 +2802,15 @@ impl Verifier {
             ) {
                 (ShowTriggers::Selective, true, false) if chosen.low_confidence => {
                     report_chosen_triggers(reporter, &chosen, true);
-                    low_confidence_triggers = Some(chosen.span);
+                    // Sail (ADR 0115): worker completion order must not choose
+                    // the explanatory summary's attachment. Choose the least
+                    // source-location spelling among the quantifiers actually
+                    // printed above. Trigger choice and diagnostics stay exact.
+                    if low_confidence_triggers.as_ref().is_none_or(|previous| {
+                        chosen.span.as_string < previous.as_string
+                    }) {
+                        low_confidence_triggers = Some(chosen.span);
+                    }
                 }
                 (ShowTriggers::Module, true, false) => {
                     report_chosen_triggers(reporter, &chosen, true);
