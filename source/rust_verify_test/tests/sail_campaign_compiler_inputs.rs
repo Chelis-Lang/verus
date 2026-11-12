@@ -104,7 +104,6 @@ fn rejected_proofs_keep_diagnostic_reads_without_successful_reuse_authority() {
     let retained = root.path().to_owned();
     std::mem::forget(root);
     let root = retained;
-    eprintln!("retained native compiler-read origin fixture: {}", root.display());
     let project = root.join("project");
     std::fs::create_dir_all(project.join("src")).expect("source directory");
     let project = project.canonicalize().expect("actual project directory");
