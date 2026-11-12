@@ -27,9 +27,12 @@ fn verify(project: &Path, normal: Option<&Path>, campaign: Option<(&Path, &str)>
         .expect("clean owned fixture target");
     assert!(clean.status.success(), "{}", String::from_utf8_lossy(&clean.stderr));
     let mut command = Command::new(cargo_verus());
+    // Both controls suppress Cargo's elapsed-time footer while every compiler
+    // output byte remains subject to the original exact comparison.
     command.current_dir(project).args([
         "verify",
         "--lib",
+        "--quiet",
         "--",
         "-Zchecksum-hash-algorithm=sha256",
     ]);
