@@ -356,6 +356,7 @@ pub fn run(
 
     if status.is_err() || verifier.encountered_vir_error {
         crate::verifier::sail_engine_sealed(false);
+        crate::sail_compiler_inputs::finish_campaign(false);
         return (
             verifier,
             Stats {
@@ -389,6 +390,7 @@ pub fn run(
     // Run borrow checker and compiler with #[exec] (not #[proof])
     if let Err(_) = compile_status {
         crate::verifier::sail_engine_sealed(false);
+        crate::sail_compiler_inputs::finish_campaign(false);
         return (verifier, stats, Err(()));
     }
 
@@ -396,6 +398,9 @@ pub fn run(
         !verifier.encountered_vir_error && verifier.count_errors == 0,
     );
     crate::sail_compiler_inputs::finish(
+        !verifier.encountered_vir_error && verifier.count_errors == 0,
+    );
+    crate::sail_compiler_inputs::finish_campaign(
         !verifier.encountered_vir_error && verifier.count_errors == 0,
     );
     (verifier, stats, Ok(()))

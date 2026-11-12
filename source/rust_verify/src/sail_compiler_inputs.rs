@@ -20,6 +20,8 @@ use serde_json::{Value, json};
 
 const DIRECTORY: &str = "SAIL_COMPILER_INPUTS";
 const BINDING: &str = "SAIL_COMPILER_INPUTS_BINDING";
+const CAMPAIGN_DIRECTORY: &str = "SAIL_CAMPAIGN_COMPILER_INPUTS";
+const CAMPAIGN_BINDING: &str = "SAIL_CAMPAIGN_COMPILER_BINDING";
 
 #[derive(PartialEq, Eq)]
 struct Request {
@@ -136,7 +138,7 @@ impl FileLoader for ObservedLoader {
 
 /// Observe returned bytes without changing the actual loader or its failures.
 pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
-    if request().is_none() && !crate::sail_native_inputs::requested() {
+    if collection_request().is_none() && !crate::sail_native_inputs::requested() {
         return;
     }
     let inner = config.file_loader.take().unwrap_or_else(|| Box::new(RealFileLoader));
@@ -242,8 +244,20 @@ fn environment_records(
 }
 
 fn request() -> Option<Request> {
-    let directory = std::env::var_os(DIRECTORY)?;
-    let binding = std::env::var(BINDING).ok()?;
+    named_request(DIRECTORY, BINDING)
+}
+
+fn campaign_request() -> Option<Request> {
+    named_request(CAMPAIGN_DIRECTORY, CAMPAIGN_BINDING)
+}
+
+fn collection_request() -> Option<Request> {
+    request().or_else(campaign_request)
+}
+
+fn named_request(directory: &str, binding: &str) -> Option<Request> {
+    let directory = std::env::var_os(directory)?;
+    let binding = std::env::var(binding).ok()?;
     if binding.len() != 64 || !binding.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
@@ -272,7 +286,7 @@ impl Pending {
 /// Retain each requested compiler phase. Failures latch refusal without
 /// changing compiler output; the consumer must require a complete record.
 pub(crate) fn record(tcx: TyCtxt<'_>, phase: &str) {
-    let Some(request) = request() else {
+    let Some(request) = collection_request() else {
         return;
     };
     let document = phase_record(tcx);
@@ -352,6 +366,58 @@ pub(crate) fn finish(success: bool) {
     }
     // The caller creates a fresh private directory. Never overwrite a record.
     // Phase multiplicity is checked in memory before this completion write.
+    if let Ok(mut file) =
+        OpenOptions::new().write(true).create_new(true).open(request.directory.join("inputs.json"))
+    {
+        let _ = file.write_all(&bytes);
+    }
+}
+
+/// Diagnostic input observations for an explicitly requested campaign. Failed
+/// verification may have no erased compilation. Its completed verification
+/// read set remains separate from the two-phase successful reuse document.
+/// This record never grants compilation, proof or receipt authority.
+pub(crate) fn finish_campaign(success: bool) {
+    let Some(request) = campaign_request() else {
+        return;
+    };
+    let Ok(pending) = PENDING.lock() else {
+        return;
+    };
+    let Some(pending) = pending.as_ref() else {
+        return;
+    };
+    if pending.request.binding != request.binding
+        || pending.failed
+        || !pending.phases.contains_key("verification")
+        || (success && !pending.complete())
+    {
+        return;
+    }
+    let Some(driver_environment) = driver_environment() else {
+        return;
+    };
+    let document = json!({
+        "kind": "sail-campaign-compiler-inputs",
+        "schema": 1,
+        "binding": request.binding,
+        "pid": std::process::id(),
+        "phases": pending.phases,
+        "driver_environment": driver_environment,
+        "complete": true,
+        "verifier_success": success,
+        "coverage": if pending.complete() {
+            "verification-and-compilation"
+        } else {
+            "verification-only"
+        },
+    });
+    let Ok(bytes) = serde_json::to_vec(&document) else {
+        return;
+    };
+    if bytes.len() > 8 * 1024 * 1024 {
+        return;
+    }
     if let Ok(mut file) =
         OpenOptions::new().write(true).create_new(true).open(request.directory.join("inputs.json"))
     {

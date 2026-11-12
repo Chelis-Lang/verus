@@ -1,0 +1,150 @@
+#![feature(rustc_private)]
+#[macro_use]
+mod common;
+
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+fn cargo_verus() -> PathBuf {
+    assert!(std::env::var_os("VERUS_IN_VARGO").is_some());
+    let executable = std::env::current_exe().expect("test executable");
+    let profile = executable.parent().expect("deps").parent().expect("profile");
+    profile
+        .ancestors()
+        .nth(2)
+        .expect("source directory")
+        .join("target-verus")
+        .join(profile.file_name().expect("profile name"))
+        .join(if cfg!(windows) { "cargo-verus.exe" } else { "cargo-verus" })
+}
+
+fn verify(project: &Path, normal: Option<&Path>, campaign: Option<(&Path, &str)>) -> Output {
+    let mut command = Command::new(cargo_verus());
+    command.current_dir(project).args([
+        "verify",
+        "--lib",
+        "--",
+        "-Zchecksum-hash-algorithm=sha256",
+    ]);
+    for name in [
+        "SAIL_COMPILER_INPUTS",
+        "SAIL_COMPILER_INPUTS_BINDING",
+        "SAIL_CAMPAIGN_COMPILER_INPUTS",
+        "SAIL_CAMPAIGN_COMPILER_BINDING",
+    ] {
+        command.env_remove(name);
+    }
+    command.env("SAIL_TEST_CAMPAIGN_VALUE", "ok");
+    if let Some(directory) = normal {
+        command
+            .env("SAIL_COMPILER_INPUTS", directory)
+            .env("SAIL_COMPILER_INPUTS_BINDING", "a".repeat(64));
+    }
+    if let Some((directory, binding)) = campaign {
+        command
+            .env("SAIL_CAMPAIGN_COMPILER_INPUTS", directory)
+            .env("SAIL_CAMPAIGN_COMPILER_BINDING", binding);
+    }
+    command.output().expect("actual Cargo-Verus child")
+}
+
+fn document(directory: &Path) -> Value {
+    serde_json::from_slice(&std::fs::read(directory.join("inputs.json")).expect("original inputs"))
+        .expect("original input JSON")
+}
+
+fn directories(root: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let normal = root.join(format!("{name}-normal"));
+    let campaign = root.join(format!("{name}-campaign"));
+    std::fs::create_dir(&normal).expect("normal observation directory");
+    std::fs::create_dir(&campaign).expect("campaign observation directory");
+    (normal, campaign)
+}
+
+#[test]
+fn rejected_proofs_keep_diagnostic_reads_without_successful_reuse_authority() {
+    let root = tempfile::tempdir().expect("fixture directory");
+    let project = root.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("source directory");
+    let vstd = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("source").join("vstd");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "campaign-input-fixture"
+version = "0.1.0"
+edition = "2024"
+[workspace]
+[package.metadata.verus]
+verify = true
+[dependencies]
+vstd = {{ path = {} }}
+"#,
+            serde_json::to_string(&vstd.to_str().expect("vstd path")).expect("quoted path")
+        ),
+    )
+    .expect("manifest");
+    let source = project.join("src/lib.rs");
+    std::fs::write(
+        &source,
+        "use vstd::prelude::*; verus! { pub proof fn warm() { assert(true); } }",
+    )
+    .expect("warm source");
+    assert!(verify(&project, None, None).status.success(), "dependency warmup");
+
+    let good = "use vstd::prelude::*; verus! { pub proof fn tracked() { assert(env!(\"SAIL_TEST_CAMPAIGN_VALUE\")@ == \"ok\"@); } }";
+    std::fs::write(&source, good).expect("passing source");
+    let binding = "a".repeat(64);
+    let (normal, campaign) = directories(root.path(), "passing");
+    let passing = verify(&project, Some(&normal), Some((&campaign, &binding)));
+    assert!(passing.status.success(), "{}", String::from_utf8_lossy(&passing.stderr));
+    assert_eq!(document(&normal)["kind"], "sail-compiler-read-inputs");
+    assert_eq!(document(&normal)["schema"], 2);
+    let reads = document(&campaign);
+    assert_eq!(reads["kind"], "sail-campaign-compiler-inputs");
+    assert_eq!(reads["schema"], 1);
+    assert_eq!(reads["binding"], binding);
+    assert_eq!(reads["complete"], true);
+    assert_eq!(reads["verifier_success"], true);
+    assert_eq!(reads["coverage"], "verification-and-compilation");
+    assert_eq!(
+        reads["phases"]["verification"]["tracked_environment"]["SAIL_TEST_CAMPAIGN_VALUE"],
+        "ok"
+    );
+
+    std::fs::write(&source, good.replace("== \"ok\"@", "== \"wrong\"@")).expect("rejected source");
+    let reference = verify(&project, None, None);
+    assert!(!reference.status.success());
+    let (normal, campaign) = directories(root.path(), "rejected");
+    let rejected = verify(&project, Some(&normal), Some((&campaign, &binding)));
+    assert_eq!(rejected.status.code(), reference.status.code());
+    assert_eq!(rejected.stdout, reference.stdout);
+    assert_eq!(rejected.stderr, reference.stderr);
+    assert!(!normal.join("inputs.json").exists(), "failed proof grants no old reuse observation");
+    let reads = document(&campaign);
+    assert_eq!(reads["verifier_success"], false);
+    assert_eq!(reads["coverage"], "verification-only");
+    assert_eq!(reads["complete"], true);
+    assert_eq!(reads["phases"].as_object().expect("phases").len(), 1);
+    assert_eq!(
+        reads["phases"]["verification"]["tracked_environment"]["SAIL_TEST_CAMPAIGN_VALUE"],
+        "ok"
+    );
+    assert!(reads["pid"].as_u64().expect("actual compiler pid") > 0);
+
+    let (normal, campaign) = directories(root.path(), "foreign-binding");
+    let foreign = "b".repeat(64);
+    assert!(!verify(&project, Some(&normal), Some((&campaign, &foreign))).status.success());
+    assert!(
+        !campaign.join("inputs.json").exists(),
+        "foreign request must not supply another observation"
+    );
+
+    std::fs::write(&source, "use vstd::prelude::*; verus! { pub fn bad() { let x: u8 = true; } }")
+        .expect("early compiler error source");
+    let (normal, campaign) = directories(root.path(), "early-error");
+    assert!(!verify(&project, Some(&normal), Some((&campaign, &binding))).status.success());
+    assert!(!normal.join("inputs.json").exists());
+    assert!(!campaign.join("inputs.json").exists(), "no completed verification read set");
+}
