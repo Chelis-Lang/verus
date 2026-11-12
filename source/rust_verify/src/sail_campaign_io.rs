@@ -60,7 +60,7 @@ impl Observed {
         Some(Artifact {
             name: name.map(str::to_owned),
             path: std::path::absolute(path).ok()?.to_str()?.to_owned(),
-            sha256: format!("{:x}", self.digest.clone().finalize()),
+            sha256: hex::encode(self.digest.clone().finalize()),
             bytes,
         })
     }
