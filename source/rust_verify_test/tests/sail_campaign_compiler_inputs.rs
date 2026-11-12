@@ -73,6 +73,28 @@ fn directories(root: &Path, name: &str) -> (PathBuf, PathBuf) {
     (normal, campaign)
 }
 
+fn check_artifacts(reads: &Value) {
+    for kind in ["imports", "exports"] {
+        let files = reads[kind].as_array().expect("explicit VIR inventory");
+        assert!(!files.is_empty(), "fixture must actually import and export VIR");
+        for file in files {
+            let path = Path::new(file["path"].as_str().expect("actual artifact path"));
+            assert_eq!(file["bytes"], std::fs::metadata(path).unwrap().len());
+            let digest = Command::new("python3").args([
+                "-c", "import hashlib,pathlib,sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())",
+                path.to_str().unwrap()
+            ]).output().expect("independent original artifact checksum");
+            assert!(digest.status.success());
+            assert_eq!(file["sha256"], String::from_utf8(digest.stdout).unwrap().trim());
+            if kind == "imports" {
+                assert_eq!(file["name"], "vstd");
+            } else {
+                assert!(file["name"].is_null());
+            }
+        }
+    }
+}
+
 #[test]
 fn rejected_proofs_keep_diagnostic_reads_without_successful_reuse_authority() {
     let root = tempfile::tempdir().expect("fixture directory");
@@ -122,11 +144,12 @@ vstd = {{ path = {} }}
     assert_eq!(document(&normal)["schema"], 2);
     let reads = document(&campaign);
     assert_eq!(reads["kind"], "sail-campaign-compiler-inputs");
-    assert_eq!(reads["schema"], 2);
+    assert_eq!(reads["schema"], 3);
     assert_eq!(reads["binding"], binding);
     assert_eq!(reads["complete"], true);
     assert_eq!(reads["verifier_success"], true);
     assert_eq!(reads["coverage"], "verification-and-compilation");
+    check_artifacts(&reads);
     assert_eq!(document(&normal)["phases"], document(&control_normal)["phases"]);
     assert_eq!(passing.stdout, control.stdout);
     assert_eq!(passing.stderr, control.stderr);

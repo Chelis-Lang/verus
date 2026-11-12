@@ -3,6 +3,7 @@ use crate::spans::FileStartEndPos;
 use crate::verifier::io_vir_err;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::sync::Arc;
 use vir::ast::{Krate, Mode, VirErr};
 
@@ -29,8 +30,8 @@ pub(crate) fn import_crates(
 ) -> Result<ImportOutput, VirErr> {
     let mut metadatas = Vec::new();
     let mut vir_crates = Vec::new();
-    for (_, file_path) in args.import.iter().chain(import_virs_via_cargo.iter()) {
-        let mut file = std::io::BufReader::new(match std::fs::File::open(file_path) {
+    for (name, file_path) in args.import.iter().chain(import_virs_via_cargo.iter()) {
+        let file = match std::fs::File::open(file_path) {
             Ok(file) => file,
             Err(err) => {
                 return Err(io_vir_err(
@@ -38,12 +39,13 @@ pub(crate) fn import_crates(
                     err,
                 ));
             }
-        });
+        };
+        let mut file = std::io::BufReader::new(crate::sail_campaign_io::Reader::new(file));
         // Sail: optionally rename recorded span strings (`sail_vir_span_remap`).
-        let decoded = vir::messages::with_imported_span_remap(
-            crate::sail_vir_span_remap::remap(),
-            || bincode_next::serde::decode_from_std_read(&mut file, bincode_next::config::legacy()),
-        );
+        let decoded =
+            vir::messages::with_imported_span_remap(crate::sail_vir_span_remap::remap(), || {
+                bincode_next::serde::decode_from_std_read(&mut file, bincode_next::config::legacy())
+            });
         let CrateWithMetadata { krate, metadata } = match decoded {
             Ok(crate_with_metadata) => crate_with_metadata,
             Err(_e) => {
@@ -52,6 +54,7 @@ pub(crate) fn import_crates(
                 )));
             }
         };
+        file.get_ref().retain(name, file_path);
         //   let libcrate: Krate = serde_json::from_reader(file).expect("read crate from file");
         // We can also look at other packages: https://github.com/djkoloski/rust_serialization_benchmark
         vir_crates.push(krate);
@@ -83,7 +86,7 @@ pub(crate) fn export_crate(
         }
         let vir_crate = Arc::new(kratex);
 
-        let mut file = std::io::BufWriter::new(match std::fs::File::create(file_path) {
+        let file = match std::fs::File::create(file_path) {
             Ok(file) => file,
             Err(err) => {
                 return Err(io_vir_err(
@@ -91,7 +94,8 @@ pub(crate) fn export_crate(
                     err,
                 ));
             }
-        });
+        };
+        let mut file = std::io::BufWriter::new(crate::sail_campaign_io::Writer::new(file));
         let krate_with_metadata = CrateWithMetadata { krate: vir_crate, metadata: vir_metadata };
         bincode_next::serde::encode_into_std_write(
             &krate_with_metadata,
@@ -99,6 +103,10 @@ pub(crate) fn export_crate(
             bincode_next::config::legacy(),
         )
         .expect("write crate to file");
+        if crate::sail_compiler_inputs::campaign_requested() {
+            let flushed = file.flush().is_ok();
+            file.get_ref().retain(file_path, flushed);
+        }
         //serde_json::to_writer(file, &vir_crate).expect("write crate to file");
         //serde_json::to_writer_pretty(file, &vir_crate).expect("write crate to file");
     }

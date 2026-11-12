@@ -164,6 +164,7 @@ pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
 }
 
 pub(crate) fn begin_driver_environment(via_cargo: bool) {
+    crate::sail_campaign_io::begin();
     if let Ok(mut driver) = CAMPAIGN_DRIVER.lock() {
         *driver = if via_cargo { None } else { Some(BTreeMap::new()) };
     }
@@ -295,6 +296,10 @@ fn request() -> Option<Request> {
 
 fn campaign_request() -> Option<Request> {
     named_request(CAMPAIGN_DIRECTORY, CAMPAIGN_BINDING)
+}
+
+pub(crate) fn campaign_requested() -> bool {
+    campaign_request().is_some()
 }
 
 fn collection_request() -> Option<Request> {
@@ -468,15 +473,20 @@ pub(crate) fn finish_campaign(success: bool) {
     if source_environment.keys().ne(pending.phases.keys()) {
         return;
     }
+    let Some((imports, exports)) = crate::sail_campaign_io::inventory() else {
+        return;
+    };
     let document = json!({
         "kind": "sail-campaign-compiler-inputs",
-        "schema": 2,
+        "schema": 3,
         "binding": request.binding,
         "pid": std::process::id(),
         "phases": pending.phases,
         "driver_environment": driver_environment,
         "driver_tracked_environment": driver_tracked_environment,
         "source_environment": *source_environment,
+        "imports": imports,
+        "exports": exports,
         "complete": true,
         "verifier_success": success,
         "coverage": if pending.complete() {
