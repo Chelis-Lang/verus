@@ -1149,6 +1149,21 @@ impl Verifier {
             air_context.comment(&context.span.as_string);
         }
         for command in commands.iter() {
+            // VI-0010: the old friendly header is intentionally preserved.
+            // Emit a trusted identity after all source-controlled comments,
+            // immediately before every AIR query (including split queries).
+            if matches!(**command, CommandX::CheckValid(_))
+                && (self.args.log_all
+                    || self.args.log_args.log_air_initial
+                    || self.args.log_args.log_air_final)
+            {
+                let kind = comment.split_once(' ').map_or(comment, |(kind, _)| kind);
+                air_context.comment_air(&crate::util::sail_air_query_identity(
+                    function_name,
+                    kind,
+                    &context.span.as_string,
+                ));
+            }
             let progress=if matches!(**command,CommandX::CheckValid(_)) { sail_engine::progress_start(self,&context.fun,comment,&context.desc,sail_spinoff,commands.iter().filter(|command|matches!(***command,CommandX::CheckValid(_))).count()) } else {None};
             result = result
                 + self.check_result_validity(

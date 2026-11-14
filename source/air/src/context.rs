@@ -350,6 +350,14 @@ impl Context {
         self.smt_log.comment(s);
     }
 
+    /// Writes compiler identity metadata to AIR logs only. Like comments,
+    /// this never writes a solver pipe; it also leaves SMT logs unchanged.
+    pub fn comment_air(&mut self, s: &str) {
+        self.air_initial_log.comment(s);
+        self.air_middle_log.comment(s);
+        self.air_final_log.comment(s);
+    }
+
     fn log_set_solver_option(&mut self, option: &str, value: &str) {
         self.air_initial_log.log_set_option(option, value);
         self.air_middle_log.log_set_option(option, value);

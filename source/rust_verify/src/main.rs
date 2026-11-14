@@ -24,16 +24,6 @@ fn os_setup() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Sail fork (VI-0010): the unambiguous VIR path of a function, for example
-/// `my_crate::first::impl&%0::check`: the crate, then every path segment,
-/// including the impl segment that the friendly name replaces.
-fn sail_function_path(fun: &vir::ast::Fun) -> String {
-    let path = &fun.path;
-    std::iter::once(vir::def::krate_to_string_ignore_stable_id(&path.krate))
-        .chain(path.segments.iter().map(|segment| segment.to_string()))
-        .collect::<Vec<_>>()
-        .join("::")
-}
 
 pub fn main() {
     let mut dep_tracker = rust_verify::cargo_verus_dep_tracker::DepTracker::init();
@@ -444,7 +434,7 @@ pub fn main() {
                                         // `function-path` is the VIR path, whose impl
                                         // segment (`impl&%N`) tells them apart. A new field;
                                         // existing fields are unchanged.
-                                        "function-path" : sail_function_path(f),
+                                        "function-path" : rust_verify::util::sail_function_path(f),
                                         "mode:" : verifier.get_function_mode(f).map(|m| m.to_string()),
                                         "time" : t.time_millis,
                                         "time-micros" : t.time_micros,
