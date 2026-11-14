@@ -66,6 +66,42 @@ pub fn verify_files(
 use std::{cell::RefCell, path};
 thread_local! {
     pub static THREAD_LOCAL_TEST_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
+    static DIAGNOSTIC_ECHO: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+// Buffer the helper's original echo before any diagnostic filtering. The outer
+// scope prints every complete message, including duplicates, even on unwind.
+pub fn with_sorted_diagnostic_echo<T>(operation: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Vec<String>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let mut original = DIAGNOSTIC_ECHO.with(|buffer| {
+                std::mem::replace(&mut *buffer.borrow_mut(), self.0.take()).unwrap_or_default()
+            });
+            DIAGNOSTIC_ECHO.with(|buffer| {
+                if let Some(parent) = buffer.borrow_mut().as_mut() {
+                    parent.extend(original);
+                } else {
+                    original.sort();
+                    for message in original {
+                        eprintln!("{}", message);
+                    }
+                }
+            });
+        }
+    }
+    let _restore = Restore(DIAGNOSTIC_ECHO.with(|buffer| buffer.replace(Some(Vec::new()))));
+    operation()
+}
+
+fn echo_diagnostic(rendered: &str) {
+    DIAGNOSTIC_ECHO.with(|buffer| {
+        if let Some(messages) = buffer.borrow_mut().as_mut() {
+            messages.push(rendered.to_owned());
+        } else {
+            eprintln!("{}", rendered);
+        }
+    });
 }
 
 pub fn verify_files_vstd(
@@ -201,7 +237,7 @@ pub fn parse_diags(
         for ss in rust_output.split("\n") {
             let diag: Result<Diagnostic, _> = serde_json::from_str(ss);
             if let Ok(diag) = diag {
-                eprintln!("{}", diag.rendered);
+                echo_diagnostic(&diag.rendered);
                 if diag.level == "note" && diag.message.starts_with("diagnostics via expansion") {
                     // TODO(main_new) define in defs
                     expand_errors_notes.push(diag);

@@ -69,12 +69,17 @@ fn sail_vi0044_summary_attachment_is_deterministic() {
         }
     };
     let mut first_attachment = None;
-    for _ in 0..20 {
-        let diagnostics = verify_one_file(
-            "sail_vi0044_summary_attachment",
-            code.clone(),
-            &["--sail-raw=--num-threads=4"],
-        )
+    for iteration in 0..20 {
+        // Preserve the individual compiler boundary: moving any original
+        // diagnostic between iterations must still change libtest stderr.
+        eprintln!("original compiler diagnostic iteration {iteration}");
+        let diagnostics = with_sorted_diagnostic_echo(|| {
+            verify_one_file(
+                "sail_vi0044_summary_attachment",
+                code.clone(),
+                &["--sail-raw=--num-threads=4"],
+            )
+        })
         .expect("both original proof functions verify");
         let shown: Vec<_> = diagnostics
             .notes
