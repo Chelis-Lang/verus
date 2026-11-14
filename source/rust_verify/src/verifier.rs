@@ -792,6 +792,7 @@ impl Verifier {
         snap_map: &Vec<(vir::messages::Span, SnapPos)>,
         command: &Command,
         context: &CommandContext,
+        air_query_identity: Option<&str>,
         prover_choice: vir::def::ProverChoice,
         default_prover_failed_assert_ids: &mut Vec<AssertId>,
     ) -> RunCommandQueriesResult {
@@ -851,14 +852,14 @@ impl Verifier {
                 &*message_interface,
                 reporter,
                 &command,
-                QueryContext { report_long_running: Some(&mut report_long_running()) },
+                QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity },
             )
         } else {
             crate::singular::check_singular_valid(
                 air_context,
                 &command,
                 &context.span,
-                QueryContext { report_long_running: Some(&mut report_long_running()) },
+                QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity },
                 reporter,
             )
         };
@@ -868,7 +869,7 @@ impl Verifier {
             &*message_interface,
             reporter,
             &command,
-            QueryContext { report_long_running: Some(&mut report_long_running()) },
+            QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity },
         );
 
         let time1 = Instant::now();
@@ -1025,7 +1026,7 @@ impl Verifier {
                     result = air_context.check_valid_again(
                         reporter,
                         only_check_earlier,
-                        QueryContext { report_long_running: Some(&mut report_long_running()) },
+                        QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity: None },
                     );
                     let time1 = Instant::now();
 
@@ -1150,20 +1151,22 @@ impl Verifier {
         }
         for command in commands.iter() {
             // VI-0010: the old friendly header is intentionally preserved.
-            // Emit a trusted identity after all source-controlled comments,
-            // immediately before every AIR query (including split queries).
-            if matches!(**command, CommandX::CheckValid(_))
+            // Carry a trusted identity with this query. AIR writes it after
+            // lazy startup, immediately before each query, including spinoffs.
+            let air_identity = if matches!(**command, CommandX::CheckValid(_))
                 && (self.args.log_all
                     || self.args.log_args.log_air_initial
                     || self.args.log_args.log_air_final)
             {
                 let kind = comment.split_once(' ').map_or(comment, |(kind, _)| kind);
-                air_context.comment_air(&crate::util::sail_air_query_identity(
+                Some(crate::util::sail_air_query_identity(
                     function_name,
                     kind,
                     &context.span.as_string,
-                ));
-            }
+                ))
+            } else {
+                None
+            };
             let progress=if matches!(**command,CommandX::CheckValid(_)) { sail_engine::progress_start(self,&context.fun,comment,&context.desc,sail_spinoff,commands.iter().filter(|command|matches!(***command,CommandX::CheckValid(_))).count()) } else {None};
             result = result
                 + self.check_result_validity(
@@ -1177,6 +1180,7 @@ impl Verifier {
                     snap_map,
                     &command,
                     &context,
+                    air_identity.as_deref(),
                     *prover_choice,
                     default_prover_failed_assert_ids,
                 );
