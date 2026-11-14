@@ -54,9 +54,10 @@ fn sail_vi0010_air_identity_follows_lazy_prelude() {
         let mut previous = "";
         for line in text.lines() {
             if line.starts_with("(check-valid") {
-                let payload = previous
-                    .strip_prefix(";; sail-query-identity-v1 ")
-                    .unwrap_or_else(|| panic!("nonadjacent identity in {filename}: {previous:?}"));
+                let payload =
+                    previous.strip_prefix(";; sail-query-identity-v1 ").unwrap_or_else(|| {
+                        panic!("nonadjacent identity in {}: {:?}", filename, previous)
+                    });
                 let identity: serde_json::Value =
                     serde_json::from_str(payload).expect("identity JSON");
                 assert_eq!(identity["schema"], 1);

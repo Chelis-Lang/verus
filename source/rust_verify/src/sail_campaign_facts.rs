@@ -79,7 +79,9 @@ pub(super) fn emit(verifier: &Verifier, compiler: &Compiler, krate: &Krate, glob
             .contains_node(&node)
             .then(|| global.func_call_graph.node_is_in_cycle(&node));
         sail_engine::emit!("campaign-function", {
-            "schema": 1, "ordinal": ordinal, "function": name, "unique": unique,
+            "schema": 2, "ordinal": ordinal, "function": name,
+            "function_path": crate::util::sail_function_path(&function.x.name),
+            "unique": unique,
             "source": source, "body": body, "mode": function.x.mode,
             "item_kind": function.x.item_kind, "recursive": recursive,
             "when_used_as_spec": function.x.attrs.autospec.is_some()
@@ -89,7 +91,7 @@ pub(super) fn emit(verifier: &Verifier, compiler: &Compiler, krate: &Krate, glob
     // require all ordinals, actual compiler completion, full input binding and
     // absence of unavailable/malformed/duplicate facts. Missing evidence refuses.
     sail_engine::emit!("campaign-facts-complete", {
-        "schema": 1, "functions": count, "graph": "verifier-crate-before-bucket-pruning"
+        "schema": 2, "functions": count, "graph": "verifier-crate-before-bucket-pruning"
     });
 }
 
