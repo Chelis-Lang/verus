@@ -373,3 +373,75 @@ pub(crate) fn iter_crate_free_items<'tcx>(
 ) -> impl Iterator<Item = &'tcx rustc_hir::Item<'tcx>> {
     tcx.hir_crate_items(()).free_items().map(move |item_id| tcx.hir_item(item_id))
 }
+
+/// Sail fork (VI-0010): the unambiguous VIR path of a function, for example
+/// `my_crate::first::impl&%0::check`: the crate, then every path segment,
+/// including the impl segment that the friendly name replaces.
+pub fn sail_function_path(fun: &vir::ast::Fun) -> String {
+    let path = &fun.path;
+    std::iter::once(vir::def::krate_to_string_ignore_stable_id(&path.krate))
+        .chain(path.segments.iter().map(|segment| segment.to_string()))
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+/// Compiler-owned, single-line query identity. Only AIR logs receive this;
+/// timing JSON already carries the same VIR path. Source spans are encoded
+/// as JSON strings so a filename cannot inject a later metadata record.
+pub(crate) fn sail_air_query_identity(fun: &vir::ast::Fun, kind: &str, span: &str) -> String {
+    format!(
+        "sail-query-identity-v1 {}",
+        serde_json::json!({
+            "schema": 1,
+            "kind": kind,
+            "function": vir::ast_util::fun_as_friendly_rust_name(fun),
+            "function_path": sail_function_path(fun),
+            "span": span,
+        })
+    )
+}
+
+#[cfg(test)]
+mod sail_query_identity_tests {
+    use super::{sail_air_query_identity, sail_function_path};
+    use std::sync::Arc;
+    use vir::ast::{CrateId, Fun, FunX, PathX};
+
+    fn function(implementation: &str) -> Fun {
+        Arc::new(FunX {
+            path: Arc::new(PathX {
+                krate: CrateId::Id(Arc::new("identity".into()), 7),
+                segments: Arc::new(vec![
+                    Arc::new("module".into()),
+                    Arc::new(implementation.into()),
+                    Arc::new("check".into()),
+                ]),
+            }),
+        })
+    }
+
+    #[test]
+    fn sail_query_identity_keeps_distinct_impl_paths() {
+        let a = function("impl&%0");
+        let b = function("impl&%1");
+        assert_eq!(sail_function_path(&a), "identity::module::impl&%0::check");
+        assert_eq!(sail_function_path(&b), "identity::module::impl&%1::check");
+        assert_ne!(
+            sail_air_query_identity(&a, "Function-Def", "span"),
+            sail_air_query_identity(&b, "Function-Def", "span")
+        );
+    }
+
+    #[test]
+    fn sail_query_identity_is_one_line_and_preserves_span_bytes() {
+        let span = "quoted\".rs\n;; sail-query-identity-v1 {fake}\r\t🦀";
+        let line = sail_air_query_identity(&function("impl&%0"), "Spec-Termination", span);
+        assert_eq!(line.lines().count(), 1);
+        let payload = line.strip_prefix("sail-query-identity-v1 ").unwrap();
+        let doc: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(doc["schema"], 1);
+        assert_eq!(doc["kind"], "Spec-Termination");
+        assert_eq!(doc["span"], span);
+        assert_eq!(doc["function_path"], "identity::module::impl&%0::check");
+    }
+}

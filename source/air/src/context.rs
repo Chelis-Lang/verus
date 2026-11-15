@@ -63,11 +63,13 @@ pub(crate) enum ContextState {
 
 pub struct QueryContext<'a, 'b: 'a> {
     pub report_long_running: Option<&'a mut ReportLongRunning<'b>>,
+    /// Optional AIR-only metadata for this query, emitted after lazy startup.
+    pub air_query_identity: Option<&'a str>,
 }
 
 impl<'a, 'b: 'a> Default for QueryContext<'a, 'b> {
     fn default() -> Self {
-        QueryContext { report_long_running: None }
+        QueryContext { report_long_running: None, air_query_identity: None }
     }
 }
 
@@ -350,6 +352,14 @@ impl Context {
         self.smt_log.comment(s);
     }
 
+    /// Writes compiler identity metadata to AIR logs only. Like comments,
+    /// this never writes a solver pipe; it also leaves SMT logs unchanged.
+    fn comment_air(&mut self, s: &str) {
+        self.air_initial_log.comment(s);
+        self.air_middle_log.comment(s);
+        self.air_final_log.comment(s);
+    }
+
     fn log_set_solver_option(&mut self, option: &str, value: &str) {
         self.air_initial_log.log_set_option(option, value);
         self.air_middle_log.log_set_option(option, value);
@@ -524,6 +534,11 @@ impl Context {
     ) -> ValidityResult {
         self.ensure_started();
 
+        // Lazy bit-vector startup can emit an AIR prelude. The identity must
+        // follow it and immediately precede this query, never another command.
+        if let Some(identity) = query_context.air_query_identity {
+            self.comment_air(identity);
+        }
         self.air_initial_log.log_query(query);
         let query = match crate::typecheck::check_query(self, query) {
             Ok(query) => query,

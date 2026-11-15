@@ -187,6 +187,8 @@ impl Diagnostics for Reporter<'_> {
 // `dbg!` fallback prints stay the same.
 #[path = "sail_engine.rs"]
 mod sail_engine;
+#[path = "sail_campaign_facts.rs"]
+mod sail_campaign_facts;
 
 thread_local! {
     /// Sail fork (VI-0012): set by a parallel worker that has already reported
@@ -790,6 +792,7 @@ impl Verifier {
         snap_map: &Vec<(vir::messages::Span, SnapPos)>,
         command: &Command,
         context: &CommandContext,
+        air_query_identity: Option<&str>,
         prover_choice: vir::def::ProverChoice,
         default_prover_failed_assert_ids: &mut Vec<AssertId>,
     ) -> RunCommandQueriesResult {
@@ -849,14 +852,14 @@ impl Verifier {
                 &*message_interface,
                 reporter,
                 &command,
-                QueryContext { report_long_running: Some(&mut report_long_running()) },
+                QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity },
             )
         } else {
             crate::singular::check_singular_valid(
                 air_context,
                 &command,
                 &context.span,
-                QueryContext { report_long_running: Some(&mut report_long_running()) },
+                QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity },
                 reporter,
             )
         };
@@ -866,7 +869,7 @@ impl Verifier {
             &*message_interface,
             reporter,
             &command,
-            QueryContext { report_long_running: Some(&mut report_long_running()) },
+            QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity },
         );
 
         let time1 = Instant::now();
@@ -911,7 +914,9 @@ impl Verifier {
                         msg.push_str("; consider rerunning with --profile for more details");
                     }
                     if let Some(level) = level {
-                        reporter.report(&message(level, msg, &context.span).to_any());
+                        let diagnostic = message(level, msg, &context.span).to_any();
+                        sail_campaign_facts::diagnostic(self, &context.fun, &diagnostic, level, "resource-limit");
+                        reporter.report(&diagnostic);
                     }
                     // need to report that we need to rerun from this function (into spinoff)
                     // so that we can run the profiler on an isolated file on the second pass
@@ -936,10 +941,13 @@ impl Verifier {
                     if let Some(level) = level {
                         if let Some(error) = error {
                             // singular_invalid case
+                            sail_campaign_facts::diagnostic(self, &context.fun, &error, level, "verifier");
                             reporter.report_as(&error, level);
                         } else {
                             // bitvector case
-                            reporter.report(&message(level, &context.desc, &context.span).to_any());
+                            let diagnostic = message(level, &context.desc, &context.span).to_any();
+                            sail_campaign_facts::diagnostic(self, &context.fun, &diagnostic, level, "verifier");
+                            reporter.report(&diagnostic);
                         }
                     }
                     break;
@@ -962,6 +970,7 @@ impl Verifier {
                     let error: Message = error.downcast().unwrap();
                     if let Some(level) = level {
                         if !self.expand_flag {
+                            sail_campaign_facts::diagnostic(self, &context.fun, &error.clone().to_any(), level, "verifier");
                             match &mut *diagnostics_to_report.borrow_mut() {
                                 Some(collected) => {
                                     collected.as_mut().push((error.clone(), level));
@@ -1017,7 +1026,7 @@ impl Verifier {
                     result = air_context.check_valid_again(
                         reporter,
                         only_check_earlier,
-                        QueryContext { report_long_running: Some(&mut report_long_running()) },
+                        QueryContext { report_long_running: Some(&mut report_long_running()), air_query_identity: None },
                     );
                     let time1 = Instant::now();
 
@@ -1141,6 +1150,23 @@ impl Verifier {
             air_context.comment(&context.span.as_string);
         }
         for command in commands.iter() {
+            // VI-0010: the old friendly header is intentionally preserved.
+            // Carry a trusted identity with this query. AIR writes it after
+            // lazy startup, immediately before each query, including spinoffs.
+            let air_identity = if matches!(**command, CommandX::CheckValid(_))
+                && (self.args.log_all
+                    || self.args.log_args.log_air_initial
+                    || self.args.log_args.log_air_final)
+            {
+                let kind = comment.split_once(' ').map_or(comment, |(kind, _)| kind);
+                Some(crate::util::sail_air_query_identity(
+                    function_name,
+                    kind,
+                    &context.span.as_string,
+                ))
+            } else {
+                None
+            };
             let progress=if matches!(**command,CommandX::CheckValid(_)) { sail_engine::progress_start(self,&context.fun,comment,&context.desc,sail_spinoff,commands.iter().filter(|command|matches!(***command,CommandX::CheckValid(_))).count()) } else {None};
             result = result
                 + self.check_result_validity(
@@ -1154,6 +1180,7 @@ impl Verifier {
                     snap_map,
                     &command,
                     &context,
+                    air_identity.as_deref(),
                     *prover_choice,
                     default_prover_failed_assert_ids,
                 );
@@ -2250,6 +2277,7 @@ impl Verifier {
             self.args.report_long_running,
             smt_aliases,
         )?;
+        sail_campaign_facts::emit(self, compiler, &krate, &global_ctx);
         vir::recursive_types::check_traits(&krate, &global_ctx)?;
         let krate = vir::ast_simplify::simplify_krate(&mut global_ctx, &krate)?;
 
@@ -2784,7 +2812,7 @@ impl Verifier {
             }
         }
         let chosen_triggers = global_ctx.get_chosen_triggers();
-        let mut low_confidence_triggers = None;
+        let mut low_confidence_triggers: Option<vir::messages::Span> = None;
         for chosen in chosen_triggers {
             match (
                 self.args.show_triggers,
@@ -2793,7 +2821,15 @@ impl Verifier {
             ) {
                 (ShowTriggers::Selective, true, false) if chosen.low_confidence => {
                     report_chosen_triggers(reporter, &chosen, true);
-                    low_confidence_triggers = Some(chosen.span);
+                    // Sail (ADR 0115): worker completion order must not choose
+                    // the explanatory summary's attachment. Choose the least
+                    // source-location spelling among the quantifiers actually
+                    // printed above. Trigger choice and diagnostics stay exact.
+                    if low_confidence_triggers.as_ref().is_none_or(|previous| {
+                        chosen.span.as_string < previous.as_string
+                    }) {
+                        low_confidence_triggers = Some(chosen.span);
+                    }
                 }
                 (ShowTriggers::Module, true, false) => {
                     report_chosen_triggers(reporter, &chosen, true);

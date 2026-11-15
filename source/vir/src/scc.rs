@@ -71,6 +71,11 @@ impl<T: std::cmp::Eq + std::hash::Hash + Clone> Graph<T> {
         }
     }
 
+    /// Whether an observer can query this graph without assuming membership.
+    pub fn contains_node(&self, value: &T) -> bool {
+        self.h.contains_key(value)
+    }
+
     pub fn add_node(&mut self, value: T) {
         if !self.h.contains_key(&value) {
             self.h.insert(value.clone(), self.nodes.len());

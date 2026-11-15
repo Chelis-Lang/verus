@@ -48,10 +48,15 @@ impl DepTracker {
         let common = self.env.remove(crate::cargo_verus::VERUS_DRIVER_ARGS);
         config.track_state = Some(Box::new(move |sess| {
             crate::sail_compiler_inputs::driver_common(common);
-            for (var, val) in self.env.iter() {
-                sess.env_depinfo
-                    .borrow_mut()
-                    .insert((Symbol::intern(var), val.as_deref().map(Symbol::intern)));
+            // Campaign-only origin separation: actual source reads must not
+            // deduplicate against the driver's earlier declaration. The
+            // synchronous dep-info writer restores every driver declaration.
+            if !crate::sail_compiler_inputs::campaign_driver(&self.env) {
+                for (var, val) in self.env.iter() {
+                    sess.env_depinfo
+                        .borrow_mut()
+                        .insert((Symbol::intern(var), val.as_deref().map(Symbol::intern)));
+                }
             }
             for path in self.files.iter() {
                 sess.file_depinfo.borrow_mut().insert(Symbol::intern(

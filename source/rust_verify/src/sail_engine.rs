@@ -17,7 +17,9 @@ impl Write for Bounded {
     }
     fn flush(&mut self)->std::io::Result<()>{Ok(())}
 }
-fn active()->bool{std::env::var("SAIL_ENGINE").as_deref()==Ok("interactive")}
+fn active()->bool{matches!(std::env::var("SAIL_ENGINE").as_deref(),Ok("interactive" | "campaign"))}
+pub(super) fn campaign_requested()->bool{std::env::var("SAIL_ENGINE").as_deref()==Ok("campaign")}
+pub(super) fn campaign_facts_active()->bool{campaign_requested() && !FOCUS.load(Ordering::Relaxed)}
 // Observation is independently bounded, never part of proof acceptance.
 const OBSERVER_BYTES:usize=1024*1024;
 const OBSERVER_NAMES:usize=4096;
@@ -87,6 +89,10 @@ pub(super) use fields;
 macro_rules! emit {($kind:expr,{$($key:literal:$value:expr),* $(,)?})=>{$crate::verifier::sail_engine::observe(|phase,writer|serde_json::to_writer(writer,&$crate::verifier::sail_engine::Observation {version:1,phase,event:$kind,payload:$crate::verifier::sail_engine::Fields($crate::verifier::sail_engine::fields!($($key:$value),*))}))};}
 pub(super) use emit;
 pub(super) fn diagnostic(message:&ArcDynMessage,level:MessageLevel){if let Some(msg)=message.downcast_ref::<MessageX>(){emit!("diagnostic",{"message":msg,"level":level});}}
+// Native Vest/vstd retained starts need at most 5,811,616/3,770,344 charged
+// bytes (every start counted as new with a maximum-length kind). This finite
+// observer-storage allowance is independent of solver limits and proof acceptance.
+const ORDINALS_BYTES:usize=8*1024*1024;
 struct Ordinals {values:HashMap<(bool,String,String),u32>,charged:usize}
 static ORDINALS:std::sync::Mutex<Option<Ordinals>>=std::sync::Mutex::new(None);
 fn ordinal(function:&str,kind:&str)->Option<u32>{
@@ -97,7 +103,7 @@ fn ordinal(function:&str,kind:&str)->Option<u32>{
     let key=(FOCUS.load(Ordering::Relaxed),function.to_owned(),kind.to_owned());
     if let Some(count)=state.values.get_mut(&key){let current=*count;*count=count.checked_add(1)?;return Some(current);}
     let charge=function.len().checked_add(kind.len())?.checked_mul(8)?.checked_add(std::mem::size_of::<(bool,String,String)>().checked_mul(8)?)?.checked_add(512)?;
-    let total=state.charged.checked_add(charge)?;if total>2*1024*1024{return None;}
+    let total=state.charged.checked_add(charge)?;if total>ORDINALS_BYTES{return None;}
     state.values.try_reserve(1).ok()?;state.values.insert(key,1);state.charged=total;Some(0)
 }
 // Friendly-name multiplicity of one crate, built once per crate. Scanning every
@@ -114,7 +120,7 @@ fn unique_names(krate:&Krate)->Option<HashMap<String,u32>>{
     }
     Some(names)
 }
-fn unique(v:&Verifier,fun:&Fun)->bool {
+pub(super) fn unique(v:&Verifier,fun:&Fun)->bool {
     let Some(name)=vir::ast_util::sail_bounded_friendly_name(&fun.path,OBSERVER_NAMES)else{return false;};
     let Some(krate)=v.vir_crate.as_ref()else{return false;};
     let key=Arc::as_ptr(krate) as usize;
@@ -375,7 +381,32 @@ mod focused_serialization_tests {
     #[test] fn progress_owners_and_ordinals_refuse_excess_and_release_after_drop(){
         let mut owners=Vec::new();while let Some(owner)=ObserverOwner::acquire(){owners.push(owner);}assert!(OBSERVER_OWNED.load(Ordering::SeqCst)<=OBSERVER_OWNERS as u64);assert!(ObserverOwner::acquire().is_none());
         let owner=owners.pop().unwrap();let identity="retained-obligation".to_owned();let progress=Progress {identity:Some(identity),_owner:owner};let before=OBSERVER_OWNED.load(Ordering::SeqCst);assert_eq!(serde_json::to_string(&progress).unwrap(),"\"retained-obligation\"");drop(progress);assert_eq!(OBSERVER_OWNED.load(Ordering::SeqCst),before-24*1024);drop(owners);assert_eq!(OBSERVER_OWNED.load(Ordering::SeqCst),0);
-        {let mut slot=ORDINALS.lock().unwrap();*slot=Some(Ordinals {values:HashMap::new(),charged:2*1024*1024});}assert!(ordinal("fixture::target","Function-Def").is_none());assert!(ORDINALS.lock().unwrap().as_ref().unwrap().values.is_empty());*ORDINALS.lock().unwrap()=None;
+        {let mut slot=ORDINALS.lock().unwrap();*slot=Some(Ordinals {values:HashMap::new(),charged:ORDINALS_BYTES});}assert!(ordinal("fixture::target","Function-Def").is_none());assert!(ORDINALS.lock().unwrap().as_ref().unwrap().values.is_empty());*ORDINALS.lock().unwrap()=None;
         assert_eq!(ordinal("fixture::target","Function-Def"),Some(0));assert_eq!(ordinal("fixture::target","Function-Def"),Some(1));*ORDINALS.lock().unwrap()=None;
+        // Cover the actual failing inventory shape without changing any ID or
+        // counter behavior: distinct long names, then repeat every exact key.
+        let prefix = "fixture::retained_project_with_a_long_module_name::nested_module_with_another_long_name::function_";
+        for index in 0..3027 {
+            let function = format!("{prefix}{index}");
+            assert_eq!(ordinal(&function, "Function-Def"), Some(0));
+        }
+        for index in 0..3027 {
+            let function = format!("{prefix}{index}");
+            assert_eq!(ordinal(&function, "Function-Def"), Some(1));
+        }
+        {
+            let mut slot = ORDINALS.lock().unwrap();
+            let state = slot.as_mut().unwrap();
+            assert!(state.charged > 2 * 1024 * 1024);
+            assert!(state.charged <= ORDINALS_BYTES);
+            state.charged = ORDINALS_BYTES;
+        }
+        assert_eq!(ordinal("fixture::new_over_budget", "Function-Def"), None);
+        assert_eq!(ordinal(&format!("{prefix}0"), "Function-Def"), Some(2));
+        {
+            let mut slot = ORDINALS.lock().unwrap();
+            *slot = None;
+        }
+
     }
 }

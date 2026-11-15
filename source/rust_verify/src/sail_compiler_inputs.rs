@@ -20,6 +20,8 @@ use serde_json::{Value, json};
 
 const DIRECTORY: &str = "SAIL_COMPILER_INPUTS";
 const BINDING: &str = "SAIL_COMPILER_INPUTS_BINDING";
+const CAMPAIGN_DIRECTORY: &str = "SAIL_CAMPAIGN_COMPILER_INPUTS";
+const CAMPAIGN_BINDING: &str = "SAIL_CAMPAIGN_COMPILER_BINDING";
 
 #[derive(PartialEq, Eq)]
 struct Request {
@@ -39,6 +41,9 @@ static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 // invocation has no Cargo driver bookkeeping; an owned absent value is a
 // distinct, explicitly declared protocol read.
 static DRIVER_ENVIRONMENT: Mutex<Option<BTreeMap<String, Option<String>>>> = Mutex::new(None);
+type Environment = BTreeMap<String, Option<String>>;
+static CAMPAIGN_DRIVER: Mutex<Option<Environment>> = Mutex::new(None);
+static CAMPAIGN_SOURCE: Mutex<BTreeMap<String, Environment>> = Mutex::new(BTreeMap::new());
 
 #[derive(Clone, PartialEq, Eq)]
 struct LoadedFile {
@@ -136,7 +141,7 @@ impl FileLoader for ObservedLoader {
 
 /// Observe returned bytes without changing the actual loader or its failures.
 pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
-    if request().is_none() && !crate::sail_native_inputs::requested() {
+    if collection_request().is_none() && !crate::sail_native_inputs::requested() {
         return;
     }
     let inner = config.file_loader.take().unwrap_or_else(|| Box::new(RealFileLoader));
@@ -159,12 +164,35 @@ pub(crate) fn configure(config: &mut rustc_interface::interface::Config) {
 }
 
 pub(crate) fn begin_driver_environment(via_cargo: bool) {
+    crate::sail_campaign_io::begin();
+    if let Ok(mut driver) = CAMPAIGN_DRIVER.lock() {
+        *driver = if via_cargo { None } else { Some(BTreeMap::new()) };
+    }
+    if let Ok(mut source) = CAMPAIGN_SOURCE.lock() {
+        source.clear();
+    }
     if let Ok(mut loaded) = LOADED.lock() {
         *loaded = LoadedInputs::default();
     }
     if let Ok(mut environment) = DRIVER_ENVIRONMENT.lock() {
         *environment = if via_cargo { None } else { Some(BTreeMap::new()) };
     }
+}
+
+/// Keep campaign source reads distinct before the driver could deduplicate
+/// them. Default-mode installation remains byte-for-byte the existing path.
+pub(crate) fn campaign_driver(environment: &Environment) -> bool {
+    if campaign_request().is_none() {
+        return false;
+    }
+    if let Ok(mut driver) = CAMPAIGN_DRIVER.lock() {
+        *driver = Some(environment.clone());
+    }
+    true
+}
+
+fn campaign_driver_reads() -> Option<Environment> {
+    CAMPAIGN_DRIVER.lock().ok()?.clone()
 }
 
 pub(crate) fn driver_common(value: Option<Option<String>>) {
@@ -208,8 +236,29 @@ impl Drop for TemporaryCommon<'_> {
 /// source-read set remains unpolluted before and after the synchronous writer,
 /// including unwinding. Existing source entries are never replaced or removed.
 pub(crate) fn write_dep_info(tcx: TyCtxt<'_>) {
-    let driver = driver_environment().unwrap_or_default();
-    with_driver_common(tcx.sess, &driver, || rustc_interface::passes::write_dep_info(tcx));
+    let mut driver = driver_environment().unwrap_or_default();
+    if campaign_request().is_some() {
+        if let Some(tracked) = campaign_driver_reads() {
+            driver.extend(tracked);
+        }
+        with_driver_entries(tcx.sess, &driver, || rustc_interface::passes::write_dep_info(tcx));
+    } else {
+        with_driver_common(tcx.sess, &driver, || rustc_interface::passes::write_dep_info(tcx));
+    }
+}
+
+fn with_driver_entries<T>(session: &Session, driver: &Environment, write: impl FnOnce() -> T) -> T {
+    let source: std::collections::BTreeSet<_> =
+        session.env_depinfo.borrow().iter().map(|(name, _)| name.as_str().to_owned()).collect();
+    let mut guards = Vec::new();
+    for (name, value) in driver {
+        if !source.contains(name) {
+            let entry = (Symbol::intern(name), value.as_deref().map(Symbol::intern));
+            let inserted = session.env_depinfo.borrow_mut().insert(entry).then_some(entry);
+            guards.push(TemporaryCommon { session, inserted });
+        }
+    }
+    write()
 }
 
 fn with_driver_common<T>(
@@ -242,8 +291,24 @@ fn environment_records(
 }
 
 fn request() -> Option<Request> {
-    let directory = std::env::var_os(DIRECTORY)?;
-    let binding = std::env::var(BINDING).ok()?;
+    named_request(DIRECTORY, BINDING)
+}
+
+fn campaign_request() -> Option<Request> {
+    named_request(CAMPAIGN_DIRECTORY, CAMPAIGN_BINDING)
+}
+
+pub(crate) fn campaign_requested() -> bool {
+    campaign_request().is_some()
+}
+
+fn collection_request() -> Option<Request> {
+    request().or_else(campaign_request)
+}
+
+fn named_request(directory: &str, binding: &str) -> Option<Request> {
+    let directory = std::env::var_os(directory)?;
+    let binding = std::env::var(binding).ok()?;
     if binding.len() != 64 || !binding.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
@@ -272,10 +337,26 @@ impl Pending {
 /// Retain each requested compiler phase. Failures latch refusal without
 /// changing compiler output; the consumer must require a complete record.
 pub(crate) fn record(tcx: TyCtxt<'_>, phase: &str) {
-    let Some(request) = request() else {
+    let Some(request) = collection_request() else {
         return;
     };
-    let document = phase_record(tcx);
+    let mut document = phase_record(tcx);
+    if campaign_request().is_some() {
+        document = document.and_then(|mut document| {
+            let source: Environment =
+                serde_json::from_value(document["tracked_environment"].clone()).ok()?;
+            let mut sources = CAMPAIGN_SOURCE.lock().ok()?;
+            if sources.insert(phase.to_owned(), source.clone()).is_some() {
+                return None;
+            }
+            if phase == "verification" {
+                let environment =
+                    environment_records(source.into_iter().chain(campaign_driver_reads()?))?;
+                document["tracked_environment"] = serde_json::to_value(environment).ok()?;
+            }
+            Some(document)
+        });
+    }
     let Ok(mut pending) = PENDING.lock() else {
         return;
     };
@@ -352,6 +433,74 @@ pub(crate) fn finish(success: bool) {
     }
     // The caller creates a fresh private directory. Never overwrite a record.
     // Phase multiplicity is checked in memory before this completion write.
+    if let Ok(mut file) =
+        OpenOptions::new().write(true).create_new(true).open(request.directory.join("inputs.json"))
+    {
+        let _ = file.write_all(&bytes);
+    }
+}
+
+/// Diagnostic input observations for an explicitly requested campaign. Failed
+/// verification may have no erased compilation. Its completed verification
+/// read set remains separate from the two-phase successful reuse document.
+/// This record never grants compilation, proof or receipt authority.
+pub(crate) fn finish_campaign(success: bool) {
+    let Some(request) = campaign_request() else {
+        return;
+    };
+    let Ok(pending) = PENDING.lock() else {
+        return;
+    };
+    let Some(pending) = pending.as_ref() else {
+        return;
+    };
+    if pending.request.binding != request.binding
+        || pending.failed
+        || !pending.phases.contains_key("verification")
+        || (success && !pending.complete())
+    {
+        return;
+    }
+    let Some(driver_environment) = driver_environment() else {
+        return;
+    };
+    let Some(driver_tracked_environment) = campaign_driver_reads() else {
+        return;
+    };
+    let Ok(source_environment) = CAMPAIGN_SOURCE.lock() else {
+        return;
+    };
+    if source_environment.keys().ne(pending.phases.keys()) {
+        return;
+    }
+    let Some((imports, exports)) = crate::sail_campaign_io::inventory() else {
+        return;
+    };
+    let document = json!({
+        "kind": "sail-campaign-compiler-inputs",
+        "schema": 3,
+        "binding": request.binding,
+        "pid": std::process::id(),
+        "phases": pending.phases,
+        "driver_environment": driver_environment,
+        "driver_tracked_environment": driver_tracked_environment,
+        "source_environment": *source_environment,
+        "imports": imports,
+        "exports": exports,
+        "complete": true,
+        "verifier_success": success,
+        "coverage": if pending.complete() {
+            "verification-and-compilation"
+        } else {
+            "verification-only"
+        },
+    });
+    let Ok(bytes) = serde_json::to_vec(&document) else {
+        return;
+    };
+    if bytes.len() > 8 * 1024 * 1024 {
+        return;
+    }
     if let Ok(mut file) =
         OpenOptions::new().write(true).create_new(true).open(request.directory.join("inputs.json"))
     {
